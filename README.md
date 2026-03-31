@@ -26,9 +26,9 @@ The main class `sdhawkes.py` of this repository implements exact simulation of s
 ## Mathematical Model
 
 For a `d`-dimensional counting process $N(t) = (N_1(t), \ldots, N_d(t))$ we define a state process $Y(t) = M N(t)$, where `M` (`state_matrix` in the code) can be a row vector (scalar state) or a full matrix (vector state). The state-dependent Hawkes intensity for component `i` is
-\(
+\[
 \lambda_i(t) = \mu_i\big(t, Y(t-)\big) + \sum_{j=1}^d \int_0^{t^-} \phi_{ij}\big(t-s, Y(s-)\big)\, dN_j(s),
-\)
+\]
 
 where `\mu` is encoded via `background_intensity_func` and `\phi` is encoded by `excitation_kernel_func`. Both callbacks receive the current (or past) state so that arbitrary state dependence can be modeled. The simulator keeps the full path history $(t_k, d_k, Y(t_k^-))$ and reevaluates the vectorized kernel whenever intensities are updated, guaranteeing exact Ogata thinning while allowing completely custom functional forms.
 
