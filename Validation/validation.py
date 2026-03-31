@@ -298,7 +298,7 @@ def simulate_SAHawkes(T: float, mu: np.ndarray, alpha: np.ndarray, beta: np.ndar
     
     return sims
 
-def simulate_Exp_SDHawkes(T: float, background_intensity: Callable, alpha: np.ndarray, beta: np.ndarray, r: Callable, num_paths: int, output_file: Optional[str] = None, seeds_list: Optional[List] = None) -> List:
+def simulate_Exp_SDHawkes(T: float, background_intensity: Callable, alpha: np.ndarray, beta: np.ndarray, r: Callable, num_paths: int, output_file: Optional[str] = None, base_seed = None) -> List:
     """
     Simulate multiple paths using Exp_SDHawkes (efficient exponential kernel implementation).
     
@@ -349,22 +349,20 @@ def simulate_Exp_SDHawkes(T: float, background_intensity: Callable, alpha: np.nd
         use_disk=use_disk
     )
     
-    sims = []
-    for i in range(num_paths):
-        seed_i = seeds_list[i] if seeds_list is not None else None
-        if use_disk:
-            raw_output = obj.SDHawkes_sim(T=T, FLLN_scaling=1.0, output_file=f"{output_file}_{i}", seed=seed_i)
-            sims.append(raw_output)
-        else:
-            # SDHawkes_sim returns (arrival_times_array, arrival_dims_array, arrival_states_array)
-            times, dims, states = obj.SDHawkes_sim(T=T, FLLN_scaling=1.0, seed=seed_i)
-            # Convert to (paths, full_information) format
-            paths_and_info = obj.build_paths_list(times, dims, states)
-            sims.append(paths_and_info)
+    raw_results = obj.sim(
+        T=T,
+        FLLN_scaling=1.0,
+        num_paths=num_paths,
+        output_dir=output_file if use_disk else None,
+        external_info={"alpha": alpha.tolist(), "beta": beta.tolist(), "mu": background_intensity(0, 0).tolist()},
+        base_seed=base_seed
+    )
     
-    return sims
+    if use_disk:
+        return raw_results  # (results_list, subfolder_path)
+    return [obj.build_paths_list(*triple) for triple in raw_results]
 
-def simulate_SDHawkes(T: float, mu: np.ndarray, alpha: np.ndarray, beta: np.ndarray, num_paths: int, output_file: Optional[str] = None, seeds_list: Optional[List] = None) -> List:
+def simulate_SDHawkes(T: float, mu: np.ndarray, alpha: np.ndarray, beta: np.ndarray, num_paths: int, output_file: Optional[str] = None, base_seed: Optional[int] = None) -> List:
     """
     Simulate multiple paths using general SDHawkes class with manually-coded exponential kernel.
     
@@ -425,7 +423,7 @@ def simulate_SDHawkes(T: float, mu: np.ndarray, alpha: np.ndarray, beta: np.ndar
     # No state changes in state-agnostic case
     state_matrix = np.zeros((1, dim))
     
-    # Since mu is constant, background_intensity_max may be set to 0 while still resulting in the correct calculation of Max_intensity in SDHawkes_sim.py circa line 300
+    # Since mu is constant, background_intensity_max may be set to 0 while still resulting in the correct calculation of Max_intensity in sim.py circa line 300
     background_intensity_max = 0.0
     
     use_disk = output_file is not None
@@ -439,20 +437,18 @@ def simulate_SDHawkes(T: float, mu: np.ndarray, alpha: np.ndarray, beta: np.ndar
         use_disk=use_disk
     )
     
-    sims = [[] for _ in range(num_paths)]
-    for i in range(num_paths):
-        seed_i = seeds_list[i] if seeds_list is not None else None
-        if use_disk:
-            raw_output = obj.SDHawkes_sim(T=T, FLLN_scaling=1.0, output_file=f"{output_file}_{i}", seed=seed_i)
-            sims[i] = raw_output
-        else:
-            # SDHawkes_sim returns (arrival_times_array, arrival_dims_array, arrival_states_array)
-            times, dims, states = obj.SDHawkes_sim(T=T, FLLN_scaling=1.0, seed=seed_i)
-            # Convert to (paths, full_information) format
-            paths_and_info = obj.build_paths_list(times, dims, states)
-            sims[i] = paths_and_info
+    raw_results = obj.sim(
+        T=T,
+        FLLN_scaling=1.0,
+        num_paths=num_paths,
+        output_dir=output_file if use_disk else None,
+        external_info={"alpha": alpha.tolist(), "beta": beta.tolist(), "mu": mu.tolist()},
+        base_seed=base_seed
+    )
     
-    return sims
+    if use_disk:
+        return raw_results  # (results_list, subfolder_path)
+    return [obj.build_paths_list(*triple) for triple in raw_results]
 
 # We copy over from SDHawkes_2d_sim.py the simulation function due to the use of global dependencies within the 2d simulation script
 def Hawkes_2d_sim(T: float, background_intensity: Callable, alpha: np.ndarray, beta: np.ndarray, r: Callable, max_arrivals: int, FLLN_scaling: float, output_file: Optional[str] = None, seed: Optional[Union[int, np.random.SeedSequence]] = None) -> Union[str, Tuple[List, List]]:
@@ -513,7 +509,7 @@ def Hawkes_2d_sim(T: float, background_intensity: Callable, alpha: np.ndarray, b
     excitation_matrix = np.zeros((2, 2))
     excitation_vec = excitation_matrix @ ones_vec
     # Cumulative intensity
-    current_intensity_vec = background_intensity(t, current_state/FLLN_scaling) # intensity has no excitation before the first arrival  # NOTE: this has been changed from the 2-d simulation just to make it use the same format as SDHawkes_sim.py where the FLLN scaling is passed with the state
+    current_intensity_vec = background_intensity(t, current_state/FLLN_scaling) # intensity has no excitation before the first arrival  # NOTE: this has been changed from the 2-d simulation just to make it use the same format as sim.py where the FLLN scaling is passed with the state
 
     while (t < T) and (num_arrivals_so_far < max_arrivals*FLLN_scaling): #FLLN scaling because we simulate on an extended horizon when FLLN > 1.
 
@@ -533,7 +529,7 @@ def Hawkes_2d_sim(T: float, background_intensity: Callable, alpha: np.ndarray, b
         excitation_matrix *= np.exp(-beta * time_diff) # decay excitation terms
         excitation_vec = excitation_matrix @ ones_vec # sum rows to get total intensity for each dimension
         # Update background intensity due to time progression
-        background = background_intensity(t,current_state/FLLN_scaling) # NOTE: this has been changed from the 2-d simulation just to make it use the same format as SDHawkes_sim.py where the FLLN scaling is passed with the state
+        background = background_intensity(t,current_state/FLLN_scaling) # NOTE: this has been changed from the 2-d simulation just to make it use the same format as sim.py where the FLLN scaling is passed with the state
         current_intensity_vec = excitation_vec + background # total intensity for each dimension
 
         if (t < T) and (U <= np.sum(current_intensity_vec)):

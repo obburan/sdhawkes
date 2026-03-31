@@ -577,52 +577,12 @@ class SDHawkes:
     #------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     ## Simulation Functions
 
-    def SDHawkes_sim(self, T:float, FLLN_scaling:float=1, output_file:str=None, seed=None):
-        """
-        Simulate a single path of a state-dependent Hawkes process up to time FLLN_scaling * T using Ogata's modified thinning algorithm.
-        
-        Parameters:
-        -----------
-        T : float
-            Final simulation time. Actual simulation runs on [0, FLLN_scaling * T]
-        FLLN_scaling : float, optional
-            Scaling parameter for FLLN (default: 1). Extends simulation horizon to [0, n*T] and automatically passes rescaled states (state/n) to user functions.
-        output_file : str, optional
-            Path to save simulation output to disk. If None and use_disk=False, returns numpy arrays in memory. If None and use_disk=True, raises ValueError.
-        seed : int, np.random.SeedSequence, or None, optional
-            Seed for the random number generator. If None, uses OS entropy.
-            
-        Returns:
-        --------
-        If output_file provided (use_disk=True):
-            str : Path to the output file
-        Otherwise (use_disk=False):
-            tuple : (arrival_times_array, arrival_dims_array, arrival_states_array)
-                - arrival_times_array (np.ndarray): Times of all arrivals
-                - arrival_dims_array (np.ndarray): Dimensions of all arrivals  
-                - arrival_states_array (np.ndarray): States at all arrivals
-
-        Notes:
-        ------
-        - If output_file is provided, arrival data is written to disk at the end of the simulation.
-        - Memory usage: O(max_arrivals) during each simulation regardless of use_disk setting. Disk mode only reduces total concurrent memory usage across multiple simulations when running multiple paths.
-        """
-
-        # if self.use_disk == True, then enforce providing output file
-        use_disk = self.use_disk
-        if use_disk:
-            if output_file is None:
-                raise ValueError("If use_disk is True, output_file must be provided")
-
-        return sim_SDHawkes_once_general(self.dim, self.state_dim, self.state_matrix, self.background_intensity_func, self.background_intensity_max, self.excitation_kernel_func, self.max_arrivals, self.use_disk, T, FLLN_scaling, output_file, seed)
-
-
     def _make_sim_partial(self):
         """ 
         Create a picklable partial of the module-level simulation function with all fixed (instance-level) parameters bound. The returned callable has signature:
             sim_partial(T, FLLN_scaling, output_file) -> result
         
-        This is used by FLLN_sim to create a function that can be safely sent to worker processes without pickling `self` or any bound methods.
+        This is used by sim() to create a function that can be safely sent to worker processes without pickling `self` or any bound methods.
         
         IMPORTANT: For this to be picklable by multiprocessing, all user-provided callables (background_intensity_func, excitation_kernel_func) must be defined at module level in the user's script (not lambdas or nested functions).
         
@@ -638,15 +598,15 @@ class SDHawkes:
             self.excitation_kernel_func, self.max_arrivals, self.use_disk)
 
 
-    def FLLN_sim(self, T_final:float, FLLN_scaling:float, num_paths:int, output_dir:str=None, external_info:dict=None, base_seed=None):
+    def sim(self, T:float, FLLN_scaling:float, num_paths:int, output_dir:str=None, external_info:dict=None, base_seed=None):
         """
-        Run FLLN-scaled parallel simulations of the state-dependent Hawkes process.
+        Run (possibly FLLN-scaled) parallel simulations of the state-dependent Hawkes process.
         
-        Simulates num_paths independent paths on [0, FLLN_scaling * T_final], with states rescaled by 1/FLLN_scaling inside user functions Uses multiprocessing for parallelism when num_workers > 1.
+        Simulates num_paths independent paths on [0, FLLN_scaling * T], with states rescaled by 1/FLLN_scaling inside user functions Uses multiprocessing for parallelism when num_workers > 1.
         
         Parameters:
         -----------
-        T_final : float
+        T : float
             Final time for the FLLN-scaled simulation
         FLLN_scaling : float
             Scaling parameter n for FLLN
@@ -674,20 +634,20 @@ class SDHawkes:
         subfolder_path = None
         if self.use_disk:
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            subfolder_name = f"FLLN_n{FLLN_scaling}_T{T_final}_paths{num_paths}_{timestamp}"
+            subfolder_name = f"FLLN_n{FLLN_scaling}_T{T}_paths{num_paths}_{timestamp}"
             subfolder_path = os.path.join(output_dir, subfolder_name)
             os.makedirs(subfolder_path, exist_ok=True)
             print(f"Created simulation folder: {subfolder_path}")
             
             # Write simulation parameters to text file
-            param_file = self.write_simulation_parameters(subfolder_path, output_dir, FLLN_scaling, T_final, num_paths, timestamp, external_info)
+            param_file = self.write_simulation_parameters(subfolder_path, output_dir, FLLN_scaling, T, num_paths, timestamp, external_info)
             print(f"Saved simulation parameters to: {param_file}")
         
         # Build a picklable partial of the module-level simulation function with all instance parameters to remove references to self.
         sim_partial = self._make_sim_partial()
         
         # Pass sim_partial into a partially evaluated _sim_wrapper along with other function-call-specific parameters.
-        sim_func = partial(_sim_wrapper, sim_partial, T_final, FLLN_scaling)
+        sim_func = partial(_sim_wrapper, sim_partial, T, FLLN_scaling)
         
         # Spawn independent child seeds from SeedSequence for each simulation path
         ss = np.random.SeedSequence(base_seed)
@@ -708,7 +668,7 @@ class SDHawkes:
     #------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     ## Plotting and other output functions
 
-    def write_simulation_parameters(self, subfolder_path, output_dir, FLLN_scaling, T_final, num_paths, timestamp, external_info=None):
+    def write_simulation_parameters(self, subfolder_path, output_dir, FLLN_scaling, T, num_paths, timestamp, external_info=None):
         """
         Write simulation parameters to a text file in the specified subfolder.
         
@@ -717,10 +677,10 @@ class SDHawkes:
         subfolder_path : str
             Path to the subfolder where the parameter file should be saved
         output_dir : str
-            Root output directory (passed from FLLN_sim, not stored on self)
+            Root output directory (passed from sim(), not stored on self)
         FLLN_scaling : float
             FLLN scaling parameter n
-        T_final : float
+        T : float
             Final simulation time
         num_paths : int
             Number of simulation paths
@@ -759,10 +719,10 @@ class SDHawkes:
             f.write("FLLN PARAMETERS\n")
             f.write("-" * 70 + "\n")
             f.write(f"FLLN Scaling (n): {FLLN_scaling}\n")
-            f.write(f"Final Time (T): {T_final}\n")
+            f.write(f"Final Time (T): {T}\n")
             f.write(f"Number of Paths: {num_paths}\n")
-            f.write(f"Simulated Time Horizon: [0, {FLLN_scaling * T_final}]\n")
-            f.write(f"Rescaled Time Horizon: [0, {T_final}]\n\n")
+            f.write(f"Simulated Time Horizon: [0, {FLLN_scaling * T}]\n")
+            f.write(f"Rescaled Time Horizon: [0, {T}]\n\n")
             
             f.write("HAWKES PROCESS CLASS PARAMETERS\n")
             f.write("-" * 70 + "\n")
@@ -1107,59 +1067,7 @@ class Exp_SDHawkes(SDHawkes):
 
         return excitation_kernel_func
 
-    def SDHawkes_sim(self, T:float, FLLN_scaling:float=1, output_file:str=None, seed=None) -> list:
-        """
-        Simulate a single path of a state-dependent Hawkes process up to time FLLN_scaling * T using Ogata's modified thinning algorithm, but specifically for Hawkes processes with exponential kernels and multiplicatively-factored state dependence, i.e., 
-            φ_{ij}(t,y) = r_{ij}(y) α_{ij} e^{-β_{ij} t}
-        We overwrite the general SDHawkes simulation algorithm because for exponential excitation kernels there is a simple update formula for efficient computation of excitation terms, dramatically speeding up simulation time.
-        
-        Parameters:
-        -----------
-        T : float
-            Final simulation time. Actual simulation runs on [0, FLLN_scaling * T]
-        FLLN_scaling : float, optional
-            Scaling parameter for FLLN (default: 1). Extends simulation horizon to [0, n*T]
-            and automatically passes rescaled states (state/n) to user functions.
-        output_file : str, optional
-            Path to save simulation output to disk. If None and use_disk=False, returns
-            numpy arrays in memory. If None and use_disk=True, raises ValueError.
-            
-        Returns:
-        --------
-        If output_file provided (use_disk=True):
-            str : Path to the output file
-        Otherwise (use_disk=False):
-            tuple : (arrival_times_array, arrival_dims_array, arrival_states_array)
-                - arrival_times_array (np.ndarray): Times of all arrivals
-                - arrival_dims_array (np.ndarray): Dimensions of all arrivals  
-                - arrival_states_array (np.ndarray): States at all arrivals (unscaled)
-        
-        Notes:
-        ------
-        - Uses instance attributes: alpha, beta, r (excitation parameters)
-        - Uses instance methods: background_intensity_func, state_matrix
-        - Assumes constant background intensity and exponentially decaying excitation
-        - Automatically passes rescaled states (state/n) to background_intensity_func and r function
-        """
-
-        # if self.use_disk == True, then enforce providing output file
-        use_disk = self.use_disk
-        if use_disk:
-            if output_file is None:
-                raise ValueError("If use_disk is True, output_file must be provided")
-
-        # Extract parameters from self
-        state_dim = self.state_dim
-        dim = self.dim
-        state_matrix = self.state_matrix
-        alpha = self.alpha
-        beta = self.beta
-        r = self.r
-        max_arrivals = self.max_arrivals
-        background_intensity_max = self.background_intensity_max
-
-        return sim_ExpSDHawkes_once(dim, state_dim, state_matrix, self.background_intensity_func, background_intensity_max, alpha, beta, r, max_arrivals, use_disk, T, FLLN_scaling, output_file, seed)
-
+    # wrapper for module-level Exponential SDHawkes simulation function
     def _make_sim_partial(self):
         """
         Create a picklable partial of the exponential simulation function with all fixed (instance-level) parameters bound. The returned callable has signature:
@@ -1179,6 +1087,86 @@ class Exp_SDHawkes(SDHawkes):
             self.dim, self.state_dim, self.state_matrix,
             self.background_intensity_func, self.background_intensity_max,
             self.alpha, self.beta, self.r, self.max_arrivals, self.use_disk)
+
+    def sim(self, T:float, FLLN_scaling:float=1, num_paths:int=1, output_dir:str=None, external_info:dict=None, base_seed=None):
+        # TODO: update docstring for parallel simulation
+        """
+        Run (potentially FLLN-scaled) parallel simulations of the state-dependent Hawkes process. 
+        
+        Simulates num_paths independent paths on [0, FLLN_scaling * T], with states rescaled by 1/FLLN_scaling inside user functions Uses multiprocessing for parallelism when self.num_workers > 1.
+
+        Each path is simulated up to time FLLN_scaling * T using Ogata's modified thinning algorithm, but specifically for Hawkes processes with exponential kernels and multiplicatively-factored state dependence, i.e., 
+            φ_{ij}(t,y) = r_{ij}(y) α_{ij} e^{-β_{ij} t}
+        We overwrite the general SDHawkes simulation algorithm because for this form of excitation there is a simple update formula for efficient computation of excitation terms, dramatically speeding up simulation time.
+        
+        Parameters:
+        -----------
+        T : float
+            Final time for the FLLN-scaled simulation
+        FLLN_scaling : float
+            Scaling parameter n for FLLN
+        num_paths : int
+            Number of independent simulation paths to generate
+        output_dir : str, optional
+            Directory for output files. Required if use_disk=True.
+        external_info : dict, optional
+            User-provided parameters to write to the simulation parameter file (e.g., alpha, beta, mu, delta). Only used if use_disk=True.
+            
+        Returns:
+        --------
+        If use_disk=True:
+            tuple : (results_list, subfolder_path)
+                - results_list: list of output filenames (str)
+                - subfolder_path: path to the folder containing simulation files
+        If use_disk=False:
+            list : list of (arrival_times_array, arrival_dims_array, arrival_states_array) tuples, one per simulation path
+        
+        Notes:
+        ------
+        - Uses instance attributes: alpha, beta, r (excitation parameters)
+        - Uses instance methods: background_intensity_func, state_matrix
+        - Assumes constant background intensity and exponentially decaying excitation
+        - Automatically passes rescaled states (state/n) to background_intensity_func and r function
+        """
+
+        # Validate output_dir for disk mode
+        if self.use_disk and output_dir is None:
+            raise ValueError("output_dir must be provided when use_disk=True")
+
+        # Create timestamped subfolder if using disk
+        subfolder_path = None
+        if self.use_disk:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            subfolder_name = f"FLLN_n{FLLN_scaling}_T{T}_paths{num_paths}_{timestamp}"
+            subfolder_path = os.path.join(output_dir, subfolder_name)
+            os.makedirs(subfolder_path, exist_ok=True)
+            print(f"Created simulation folder: {subfolder_path}")
+            
+            # Write simulation parameters to text file
+            param_file = self.write_simulation_parameters(subfolder_path, output_dir, FLLN_scaling, T, num_paths, timestamp, external_info)
+            print(f"Saved simulation parameters to: {param_file}")
+        
+        # Build a picklable partial of the module-level simulation function with all instance parameters to remove references to self.
+        sim_partial = self._make_sim_partial()
+        
+        # Pass sim_partial into a partially evaluated _sim_wrapper along with other function-call-specific parameters.
+        sim_func = partial(_sim_wrapper, sim_partial, T, FLLN_scaling)
+        
+        # Spawn independent child seeds from SeedSequence for each simulation path
+        ss = np.random.SeedSequence(base_seed)
+        child_seeds = ss.spawn(num_paths)
+        
+        # Generate per-simulation data (sim indices + seeds for disk mode, seeds only for memory mode)
+        data = _data_for_parallel_sims(num_paths, use_disk=self.use_disk, subfolder_path=subfolder_path, child_seeds=child_seeds)
+        
+        # Run parallel simulations
+        results_list = _run_parallel_sims(data, sim_func, self.num_workers)
+
+        if self.use_disk:
+            return results_list, subfolder_path
+        else:
+            return results_list
+
 
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------
