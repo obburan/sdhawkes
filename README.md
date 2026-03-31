@@ -26,19 +26,18 @@ The main class `sdhawkes.py` of this repository implements exact simulation of s
 ## Mathematical Model
 
 For a `d`-dimensional counting process $N(t) = (N_1(t), \ldots, N_d(t))$ we define a state process $Y(t) = M N(t)$, where `M` (`state_matrix` in the code) can be a row vector (scalar state) or a full matrix (vector state). The state-dependent Hawkes intensity for component `i` is
-$$
+\(
 \lambda_i(t) = \mu_i\big(t, Y(t-)\big) + \sum_{j=1}^d \int_0^{t^-} \phi_{ij}\big(t-s, Y(s-)\big)\, dN_j(s),
-$$
+\)
 
 where `\mu` is encoded via `background_intensity_func` and `\phi` is encoded by `excitation_kernel_func`. Both callbacks receive the current (or past) state so that arbitrary state dependence can be modeled. The simulator keeps the full path history $(t_k, d_k, Y(t_k^-))$ and reevaluates the vectorized kernel whenever intensities are updated, guaranteeing exact Ogata thinning while allowing completely custom functional forms.
 
 ### Exponential/Markovian special case
 
-The `Examples/SDHawkes_2d_sim.py` and the `Exp_SDHawkes` subclass implement the frequently used exponential kernel, but now adapted to the state-dependent setting with multiplicative state dependence.
+The `Examples/SDHawkes_2d_sim.py` and the `Exp_SDHawkes` subclass implement the frequently used exponential kernel, but now adapted to the state-dependent setting with multiplicative state dependence:
 \(
 \phi_{ij}(t-s, Y(s-)) = \alpha_{ij} \, r_i\big(Y(s-)/n\big) \, e^{-\beta_{ij}(t-s)},
 \)
-
 where `r_i` is the state-dependent amplification factor and `n` is the FLLN scaling. Because the kernel is Markovian, the implementation maintains an excitation matrix `A` and background vector `μ` instead of recomputing the integral from scratch: between arrivals `A` is decayed via `A *= exp(-β Δt)` and after an arrival in dimension `j` the column `A[:, j]` receives the rank-one update `α[:, j] * r`. This produces per-arrival $O(d^2)$ updates, which is significantly faster than iterating through the complete history (as one is forced to do in the general state-dependent case).
 
 ### Deterministic seeding & parallelism
