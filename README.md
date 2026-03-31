@@ -53,8 +53,8 @@ where $r_i$ is the state-dependent amplification factor. Because the kernel is M
 | Scenario | How to obtain it |
 | --- | --- |
 | **General state-agnostic Hawkes** | Set `background_intensity_func(t, state)` to ignore `state`, and supply an `excitation_kernel_func` that depends only on time differences. Under these choices `λ_i(t)` reduces to the usual linear Hawkes intensity with deterministic background and history kernel. Note that this works for any state-agnostic background intensity and state-agnostic, non-temporally-increasing background kernel |
-| **Exponential (Markovian) state-agnostic Hawkes** | Use the `Exp_SDHawkes` subclass (or provide an `excitation_kernel_func` that reproduces $\alpha_{ij} e^{-\beta_{ij}(t-s)}$) and let `r` be constant `1` to recover the classical state-agnostic exponential Hawkes. Setting `r` to a nontrivial function yields the state-dependent exponential model used in the FLLN scripts. |
-| **Pure background-driven Poisson** | Set `α = 0` (or make `excitation_kernel_func` return zeros) so that only `background_intensity_func` contributes (and make `background_intensity_func` not depend on `state`). This reproduces an inhomogeneous Poisson process. |
+| **Exponential (Markovian) state-agnostic Hawkes** | Use the `Exp_SDHawkes` subclass (or provide an `excitation_kernel_func` that reproduces $\alpha_{ij} e^{-\beta_{ij}(t-s)}$) and let `r` be constant `1` to recover the classical state-agnostic exponential Hawkes. Setting `r` to a nontrivial function yields the state-dependent exponential model. |
+| **State-Agnostic (inhomogeneous) Poisson** | Set `α = 0` (or make `excitation_kernel_func` return zeros) so that only `background_intensity_func` contributes (and make `background_intensity_func` not depend on `state`). This reproduces an inhomogeneous Poisson process. |
 
 These reductions make it easy to benchmark the state-dependent simulator against the analytical 1D formulas and classical limits included in `Validation/`.
 
