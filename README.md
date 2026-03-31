@@ -31,7 +31,7 @@ $$
 \lambda_i(t) = \mu_i(t, Y(t-)) + \sum_{j=1}^d \int_{[0,t)} \phi_{ij}(t-s, Y(s-))\, dN_j(s),
 $$
 
-where $\mu$ is encoded via `background_intensity_func` and $\phi$ is encoded by `excitation_kernel_func`. Both callbacks receive the current (or past) state so that arbitrary state dependence can be modeled. The simulator keeps the full path history $(t_k, d_k, Y(t_k^-))$ and reevaluates the vectorized kernel whenever intensities are updated, guaranteeing exact Ogata thinning while allowing completely custom functional forms.
+where $\mu$ is encoded via `background_intensity_func` and $\phi$ is encoded by `excitation_kernel_func`, both of which are specified by the user, so that the class can simulate a wide range of state-dependent Hawkes processes.
 
 ### Exponential/Markovian special case
 
