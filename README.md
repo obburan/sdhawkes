@@ -52,7 +52,7 @@ where $r_i$ is the state-dependent amplification factor. Because the kernel is M
 
 | Scenario | How to obtain it |
 | --- | --- |
-| **General state-agnostic Hawkes** | Set `background_intensity_func(t, state)` to ignore `state`, and supply an `excitation_kernel_func` that depends only on time differences. Under these choices `λ_i(t)` reduces to the usual linear Hawkes intensity with deterministic background and history kernel. Note that this works for any state-agnostic background intensity and state-agnostic, non-increasing background kernel |
+| **General state-agnostic Hawkes** | Set `background_intensity_func(t, state)` to ignore `state`, and supply an `excitation_kernel_func` that depends only on time differences. Under these choices `λ_i(t)` reduces to the usual linear Hawkes intensity with deterministic background and history kernel. Note that this works for any state-agnostic background intensity and state-agnostic, non-temporally-increasing background kernel |
 | **Exponential (Markovian) state-agnostic Hawkes** | Use the `Exp_SDHawkes` subclass (or provide an `excitation_kernel_func` that reproduces $\alpha_{ij} e^{-\beta_{ij}(t-s)}$) and let `r` be constant `1` to recover the classical state-agnostic exponential Hawkes. Setting `r` to a nontrivial function yields the state-dependent exponential model used in the FLLN scripts. |
 | **Pure background-driven Poisson** | Set `α = 0` (or make `excitation_kernel_func` return zeros) so that only `background_intensity_func` contributes (and make `background_intensity_func` not depend on `state`). This reproduces an inhomogeneous Poisson process. |
 
@@ -117,7 +117,7 @@ These reductions make it easy to benchmark the state-dependent simulator against
    - Provide either an integer seed (`np.random.seed`) or a `np.random.SeedSequence` to control reproducibility.
 
 6. **Parallel batches & FLLN scaling**:
-   Use `sim.run_parallel_sims(...)` (see `sdhawkes.py`) or the helper functions in `Examples/SDHawkes_2d_sim.py` to launch multiple paths. Always spawn seeds using `SeedSequence.spawn(num_paths)` to avoid duplicate paths across workers.
+   The `FLLN_sim()` method for the SDHawkes class can be used with scaling parameter $n=1$ (no scaling) to generate many simulations in parallel. The `FLLN_sim()` method also can be used, as the name suggests, to simulate FLLN-scaled paths. See `Examples/SDHawkes_2d_sim.py` for an example of this.
 
 7. **Post-processing**:
    - Convert disk outputs to arrays via `pickle.load`.
