@@ -35,9 +35,9 @@ where `\mu` is encoded via `background_intensity_func` and `\phi` is encoded by 
 ### Exponential/Markovian special case
 
 The `Examples/SDHawkes_2d_sim.py` and the `Exp_SDHawkes` subclass implement the frequently used exponential kernel, but now adapted to the state-dependent setting with multiplicative state dependence.
-$$
+\(
 \phi_{ij}(t-s, Y(s-)) = \alpha_{ij} \, r_i\big(Y(s-)/n\big) \, e^{-\beta_{ij}(t-s)},
-$$
+\)
 
 where `r_i` is the state-dependent amplification factor and `n` is the FLLN scaling. Because the kernel is Markovian, the implementation maintains an excitation matrix `A` and background vector `μ` instead of recomputing the integral from scratch: between arrivals `A` is decayed via `A *= exp(-β Δt)` and after an arrival in dimension `j` the column `A[:, j]` receives the rank-one update `α[:, j] * r`. This produces per-arrival $O(d^2)$ updates, which is significantly faster than iterating through the complete history (as one is forced to do in the general state-dependent case).
 
@@ -51,7 +51,7 @@ where `r_i` is the state-dependent amplification factor and `n` is the FLLN scal
 | Scenario | How to obtain it |
 | --- | --- |
 | **State-agnostic Hawkes** | Set `background_intensity_func(t, state)` to ignore `state`, and supply an `excitation_kernel_func` that depends only on time differences. Under these choices `λ_i(t)` reduces to the usual linear Hawkes intensity with deterministic background and history kernel. |
-| **Exponential (Markovian) Hawkes** | Use the `Exp_SDHawkes` subclass (or provide an `excitation_kernel_func` that reproduces \(α_{ij} e^{-β_{ij}(t-s)}\)) and let `r` be constant `1` to recover the classical state-agnostic exponential Hawkes. Setting `r` to a nontrivial function yields the state-dependent exponential model used in the FLLN scripts. |
+| **Exponential (Markovian) Hawkes** | Use the `Exp_SDHawkes` subclass (or provide an `excitation_kernel_func` that reproduces $\alpha_{ij} e^{-\beta_{ij}(t-s)}$) and let `r` be constant `1` to recover the classical state-agnostic exponential Hawkes. Setting `r` to a nontrivial function yields the state-dependent exponential model used in the FLLN scripts. |
 | **Pure background-driven Poisson** | Set `α = 0` (or make `excitation_kernel_func` return zeros) so that only `background_intensity_func` contributes (and make `background_intensity_func` not depend on `state`). This reproduces an inhomogeneous Poisson process. |
 
 These reductions make it easy to benchmark the state-dependent simulator against the analytical 1D formulas and classical limits included in `Validation/`.
