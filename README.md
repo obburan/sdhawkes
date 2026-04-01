@@ -33,15 +33,25 @@ $$
 
 where $\mu$ is encoded via `background_intensity_func` and $\phi$ is encoded by `excitation_kernel_func`, both of which are specified by the user, so that the class can simulate a wide range of state-dependent Hawkes processes.
 
-### Exponential/Markovian special case
+### Exponential and Multi-Exponential special case
 
-The `Examples/SDHawkes_2d_sim.py` and the `ExpSDHawkes` subclass implement the frequently used exponential kernel, but now adapted to the state-dependent setting with multiplicative state dependence:
+The `ExpSDHawkes` subclass implements the frequently used exponential kernel, but now adapted to the state-dependent setting with multiplicative state dependence:
 
 $$
-\phi_{ij}(t-s, Y(s-)) = r_i(Y(s-)) \alpha_{ij} e^{-\beta_{ij}(t-s)},
+\phi_{ij}(t-s, Y(s-)) = r_{ij}(Y(s-)) \alpha_{ij} e^{-\beta_{ij}(t-s)},
 $$
 
-where $r_i$ is the state-dependent amplification factor. Because the kernel is Markovian, the implementation maintains an excitation matrix `A` instead of recomputing the integral for the contribution from the excitation term from scratch: between arrivals `A` is decayed via `A *= exp(-β Δt)` and after an arrival in dimension `j` the column `A[:, j]` receives the rank-one update `α[:, j] * r`. This produces per-arrival $O(d^2)$ updates, which is significantly faster than iterating through the complete history (as one is forced to do in the general state-dependent case).
+where $r_{ij}$ is the state-dependent amplification factor. Because the kernel is Markovian, the implementation maintains an excitation matrix `A` instead of recomputing the integral for the contribution from the excitation term from scratch: between arrivals `A` is decayed via `A *= exp(-β Δt)` and after an arrival in dimension `j` the column `A[:, j]` receives the rank-one update `α[:, j] * r_vec[:,j]` (where `r_vec[i,j] = r(i,j,Y(s-))`). This produces per-arrival $O(d^2)$ updates, which is significantly faster than iterating through the complete history (as one is forced to do in the general state-dependent case).
+
+The `MultiExpSDHawkes` subclass implements the generalization of the exponenetial kernel to sums of exponentials:
+
+$$
+\phi_{ij}(t-s, Y(s-)) = \sum_{k=1}^L r_{ijk}(Y(s-)) \alpha_{ijk} e^{-\beta_{ijk}(t-s)},
+$$
+
+where $r_{ijk}$ plays the analogous role as in the `ExpSDHawkes` case. This subclass is useful because sums of exponentials can, to some degree, approximate more general decay distributions (see "Optimal approximations of power-laws with exponentials", 2006, by Bochud and Challet).
+
+
 
 ### Deterministic seeding & parallelism
 
