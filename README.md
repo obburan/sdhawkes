@@ -11,7 +11,6 @@ The main class `sdhawkes.py` of this repository implements exact simulation of s
 ├── requirements.txt
 ├── sdhawkes.py
 ├── SDHawkes_2d_config.py
-├── ContractivityCondClass.py
 ├── Examples/
 │   ├── ContractivityCondEx.py
 │   ├── SDHawkes_2d_main.py
@@ -150,7 +149,6 @@ These reductions make it easy to benchmark the state-dependent simulator against
 | --- | --- |
 | `sdhawkes.py` | Main simulator exposing `SDHawkes` (general kernels), `ExpSDHawkes` (exponential kernels), and `ExpSAHawkes` (state-agnostic exponential) with disk-backed storage, multiprocessing, and FLLN-scaling aware callbacks. |
 | `SDHawkes_2d_config.py` | Centralized configuration for the 2D experiments (intensity parameters, scaling, parallel worker counts, disk usage, etc.). |
-| `ContractivityCondClass.py` | Reusable class for computing contractivity conditions given user-supplied H matrices and LP solvers. |
 | `Examples/SDHawkes_2d_sim.py` | Specialized 2D exponential simulator plus helper utilities (`compute_FLLN_ODE_difference`, `solve_ode`, etc.) used in limit-theorem experiments. |
 | `Examples/SDHawkes_2d_main.py` | Driver script that solves the deterministic limit ODE, runs large batches of FLLN-scaled simulations, compares trajectories, and plots deviations. |
 | `Examples/ContractivityCondEx.py` | Computes contractivity conditions by building L¹ norm matrices `H(y)` and solving feasibility LPs (bisection and line-search) to verify stability for the chosen parameters. |
