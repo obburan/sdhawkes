@@ -35,7 +35,7 @@ where $\mu$ is encoded via `background_intensity_func` and $\phi$ is encoded by 
 
 ### Exponential/Markovian special case
 
-The `Examples/SDHawkes_2d_sim.py` and the `Exp_SDHawkes` subclass implement the frequently used exponential kernel, but now adapted to the state-dependent setting with multiplicative state dependence:
+The `Examples/SDHawkes_2d_sim.py` and the `ExpSDHawkes` subclass implement the frequently used exponential kernel, but now adapted to the state-dependent setting with multiplicative state dependence:
 
 $$
 \phi_{ij}(t-s, Y(s-)) = r_i(Y(s-)) \alpha_{ij} e^{-\beta_{ij}(t-s)},
@@ -53,7 +53,7 @@ where $r_i$ is the state-dependent amplification factor. Because the kernel is M
 | Scenario | How to obtain it |
 | --- | --- |
 | **General state-agnostic Hawkes** | Set `background_intensity_func(t, state)` to ignore `state`, and supply an `excitation_kernel_func` that depends only on time differences. Under these choices `λ_i(t)` reduces to the usual linear Hawkes intensity with deterministic background and history kernel. Note that this works for any state-agnostic background intensity and state-agnostic, non-temporally-increasing background kernel |
-| **Exponential (Markovian) state-agnostic Hawkes** | Use the `Exp_SDHawkes` subclass (or provide an `excitation_kernel_func` that reproduces $\alpha_{ij} e^{-\beta_{ij}(t-s)}$) and let `r` be constant `1` to recover the classical state-agnostic exponential Hawkes. Setting `r` to a nontrivial function yields the state-dependent exponential model. |
+| **Exponential (Markovian) state-agnostic Hawkes** | Use the `ExpSDHawkes` subclass (or provide an `excitation_kernel_func` that reproduces $\alpha_{ij} e^{-\beta_{ij}(t-s)}$) and let `r` be constant `1` to recover the classical state-agnostic exponential Hawkes. Setting `r` to a nontrivial function yields the state-dependent exponential model. |
 | **State-Agnostic (inhomogeneous) Poisson** | Set `α = 0` (or make `excitation_kernel_func` return zeros) so that only `background_intensity_func` contributes (and make `background_intensity_func` not depend on `state`). This reproduces an inhomogeneous Poisson process. |
 
 These reductions make it easy to benchmark the state-dependent simulator against the analytical 1D formulas and classical limits included in `Validation/`.
@@ -75,7 +75,7 @@ These reductions make it easy to benchmark the state-dependent simulator against
 
 2. **Create your simulation script**:
    ```python
-   from sdhawkes import SDHawkes, Exp_SDHawkes
+   from sdhawkes import SDHawkes, ExpSDHawkes
    import numpy as np
    ```
 
@@ -91,7 +91,7 @@ These reductions make it easy to benchmark the state-dependent simulator against
        # Return the dim x dim excitation matrix for arbitrary kernels
        ...  # use time_diffs/past_dims/past_states to build \phi(t-s, state)
    ```
-   For exponential kernels, prefer `Exp_SDHawkes` and define a module-level `r(i, j, state)` callable plus `alpha`, `beta`, and `state_matrix` (see `Examples/SDHawkes_2d_sim.py`).
+   For exponential kernels, prefer `ExpSDHawkes` and define a module-level `r(i, j, state)` callable plus `alpha`, `beta`, and `state_matrix` (see `Examples/SDHawkes_2d_sim.py`).
 
 4. **Instantiate the simulator**:
    ```python
@@ -110,14 +110,24 @@ These reductions make it easy to benchmark the state-dependent simulator against
 
 5. **Run simulations**:
    ```python
-   result = sim.SDHawkes_sim(T=1.0, FLLN_scaling=1.0, output_file="/tmp/path.pkl")
+   results, subfolder = sim.sim(
+       T=1.0, 
+       num_paths=100, 
+       FLLN_scaling=1.0, 
+       output_dir="/tmp/simulations",
+       base_seed=42
+   )
    ```
-   - If `use_disk=True`, `result` is a filename containing `(arrival_times, arrival_dims, arrival_states)`.
-   - If `use_disk=False`, the method returns that tuple directly.
-   - Provide either an integer seed (`np.random.seed`) or a `np.random.SeedSequence` to control reproducibility.
+   - `T`: Simulation time horizon (actual time is `FLLN_scaling * T`)
+   - `num_paths`: Number of independent paths to simulate in parallel
+   - `FLLN_scaling`: Scaling parameter for FLLN experiments (default 1.0 corresponds to no scaling)
+   - `output_dir`: Directory where timestamped subfolder will be created (required if `use_disk=True`)
+   - `base_seed`: Integer or `SeedSequence` for reproducible randomness
+   - If `use_disk=True`, returns `(file_paths_list, subfolder_path)` where each file contains `(arrival_times, arrival_dims, arrival_states)`
+   - If `use_disk=False`, returns list of `(arrival_times, arrival_dims, arrival_states)` tuples
 
 6. **Parallel batches & FLLN scaling**:
-   The `FLLN_sim()` method for the SDHawkes class can be used with scaling parameter $n=1$ (no scaling) to generate many simulations in parallel. The `FLLN_sim()` method also can be used, as the name suggests, to simulate FLLN-scaled paths. See `Examples/SDHawkes_2d_sim.py` for an example of this.
+   The `sim()` method handles both standard and FLLN-scaled simulations. Set `FLLN_scaling=1.0` for unscaled paths or `FLLN_scaling=n` to simulate on time horizon `[0, n*T]` with state rescaling `state/n` in user callbacks. Parallel execution is automatic when `num_workers > 1`. See `Examples/SDHawkes_2d_sim.py` and `Examples/SDHawkes_2d_main.py` for FLLN convergence experiments.
 
 7. **Post-processing**:
    - Convert disk outputs to arrays via `pickle.load`.
@@ -128,15 +138,15 @@ These reductions make it easy to benchmark the state-dependent simulator against
 
 | File | Description |
 | --- | --- |
-| `sdhawkes.py` | Main simulator exposing `SDHawkes` (general kernels) and `Exp_SDHawkes` (exponential kernels) with disk-backed storage, multiprocessing, and FLLN-scaling aware callbacks. |
+| `sdhawkes.py` | Main simulator exposing `SDHawkes` (general kernels), `ExpSDHawkes` (exponential kernels), and `ExpSAHawkes` (state-agnostic exponential) with disk-backed storage, multiprocessing, and FLLN-scaling aware callbacks. |
 | `SDHawkes_2d_config.py` | Centralized configuration for the 2D experiments (intensity parameters, scaling, parallel worker counts, disk usage, etc.). |
 | `ContractivityCondClass.py` | Reusable class for computing contractivity conditions given user-supplied H matrices and LP solvers. |
-| `Examples/SDHawkes_2d_sim.py` | Specialized 2D exponential simulator plus helper utilities (`FLLN_sim`, `compute_FLLN_ODE_difference`, `solve_ode`, etc.) used in limit-theorem experiments. |
+| `Examples/SDHawkes_2d_sim.py` | Specialized 2D exponential simulator plus helper utilities (`compute_FLLN_ODE_difference`, `solve_ode`, etc.) used in limit-theorem experiments. |
 | `Examples/SDHawkes_2d_main.py` | Driver script that solves the deterministic limit ODE, runs large batches of FLLN-scaled simulations, compares trajectories, and plots deviations. |
 | `Examples/ContractivityCondEx.py` | Computes contractivity conditions by building L¹ norm matrices `H(y)` and solving feasibility LPs (bisection and line-search) to verify stability for the chosen parameters. |
 | `Validation/StateAgnostic_Hawkes_class.py` | Lightweight baseline Hawkes simulator (`SAHawkes`) used whenever analytical formulas exist (no state dependence). |
 | `Validation/validation.py` | Validation utilities: analytical mean formulas, Monte Carlo aggregators, plotting helpers, multiple simulation wrappers, and exact path-comparison helpers. |
-| `Validation/validation_main.py` | Orchestrates the validation suite (single-path equality tests, multi-path overlap checks, Monte Carlo vs. analytical comparisons, and statistical summaries). |
+| `Validation/validation_main.py` | Orchestrates the validation suite (multi-path cross-implementation comparisons, Monte Carlo vs. analytical comparisons, and statistical summaries). |
 
 
 ## Thesis Examples
@@ -154,8 +164,8 @@ These scripts are included so results from the thesis can be reproduced, but day
 
 `Validation/` exists to demonstrate correctness of the simulations in SDHawkes:
 
-1. **Single-path equivalence**: `validation_main.py` drives `SAHawkes`, `SDHawkes`, `Exp_SDHawkes`, and the 2D simulator with the same `SeedSequence` child and verifies path-by-path equality.
-2. **Parallel overlap checks**: batches of paths use spawned seeds so that parallel execution never duplicates randomness.
+1. **Multi-path cross-implementation comparison**: `validation_main.py` runs multiple paths from `SAHawkes`, `SDHawkes`, `ExpSDHawkes`, and the 2D simulator with identical `SeedSequence` spawning and verifies path-by-path equality across all implementations.
+2. **Parallel seeding correctness**: Spawned child seeds ensure parallel execution produces deterministic, non-overlapping random streams with reproducible results.
 3. **Analytical benchmarking**: 1D exponential Hawkes simulations are compared against closed-form expectations for counts/intensities.
 4. **Statistical robustness**: repeated Monte Carlo runs summarize maximum deviations across many experiments. These can be re-run to observe the convergence behavior of mean error and variance.
 

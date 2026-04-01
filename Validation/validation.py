@@ -4,7 +4,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
 from StateAgnostic_Hawkes_class import SAHawkes
-from sdhawkes import SDHawkes, Exp_SDHawkes
+from sdhawkes import SDHawkes, ExpSDHawkes
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle
@@ -180,7 +180,7 @@ def plot_count_comparison(time_grid: np.ndarray, mc_mean_count: np.ndarray, anal
     analytical_count : np.ndarray, shape (n_grid,)
         Analytical expected count
     method_name : str
-        Name of simulation method (e.g., 'SAHawkes', 'Exp_SDHawkes')
+        Name of simulation method (e.g., 'SAHawkes', 'ExpSDHawkes')
     output_dir : str
         Directory to save plot
     num_mc_paths : int
@@ -222,7 +222,7 @@ def plot_intensity_comparison(time_grid: np.ndarray, mc_mean_intensity: np.ndarr
     analytical_intensity : np.ndarray, shape (n_grid,)
         Analytical expected intensity
     method_name : str
-        Name of simulation method (e.g., 'SAHawkes', 'Exp_SDHawkes')
+        Name of simulation method (e.g., 'SAHawkes', 'ExpSDHawkes')
     output_dir : str
         Directory to save plot
     num_mc_paths : int
@@ -255,7 +255,9 @@ def plot_intensity_comparison(time_grid: np.ndarray, mc_mean_intensity: np.ndarr
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 ## Simulation Functions
 
-def simulate_SAHawkes(T: float, mu: np.ndarray, alpha: np.ndarray, beta: np.ndarray, num_paths: int, output_file: Optional[str] = None, seeds_list: Optional[List] = None) -> List:
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+def simulate_SAHawkes(T: float, mu: np.ndarray, alpha: np.ndarray, beta: np.ndarray, num_paths: int, output_dir: Optional[str] = None, base_seed: Optional[int] = None) -> List:
     """
     Simulate multiple paths of a state-agnostic Hawkes process.
     
@@ -274,11 +276,11 @@ def simulate_SAHawkes(T: float, mu: np.ndarray, alpha: np.ndarray, beta: np.ndar
         Decay rate matrix of shape (dim, dim).
     num_paths : int
         Number of independent simulation paths to generate.
-    output_file : str, optional
-        Base path for output files. If provided, saves to disk with suffixes _0, _1, etc.
+    output_dir : str, optional
+        Directory for output files. If provided, saves to disk with auto-generated names.
         If None, returns results in memory. Default is None.
-    seeds_list : list of SeedSequence, optional
-        List of random seeds, one per path. If None, uses OS entropy. Default is None.
+    base_seed : int, optional
+        Base random seed for reproducibility. If provided, spawns child seeds for each path. If None, uses OS entropy. Default is None.
     
     Returns
     -------
@@ -286,21 +288,30 @@ def simulate_SAHawkes(T: float, mu: np.ndarray, alpha: np.ndarray, beta: np.ndar
         List of simulation results, one per path.
         Each element is either a file path (str) if output_file provided, or a tuple (paths, full_information) if in-memory.
     """
-    use_disk = output_file is not None
+    use_disk = output_dir is not None
     obj = SAHawkes(mu, alpha, beta, T, max_arrivals=1000000, use_disk=use_disk)
+    
+    # Spawn child seeds if base_seed provided
+    if base_seed is not None:
+        ss = np.random.SeedSequence(base_seed)
+        child_seeds = ss.spawn(num_paths)
+    else:
+        child_seeds = [None] * num_paths
+    
     sims = [[] for _ in range(num_paths)]
     for i in range(num_paths):
-        seed_i = seeds_list[i] if seeds_list is not None else None
         if use_disk:
-            sims[i] = obj.simulate_path(output_file=f"{output_file}_{i}", seed=seed_i)
+            output_name = f"sim_{i:04d}.pkl"
+            output_file = os.path.join(output_dir, output_name)
+            sims[i] = obj.simulate_path(output_file=output_file, seed=child_seeds[i])
         else:
-            sims[i] = obj.simulate_path(seed=seed_i)
+            sims[i] = obj.simulate_path(seed=child_seeds[i])
     
     return sims
 
-def simulate_Exp_SDHawkes(T: float, background_intensity: Callable, alpha: np.ndarray, beta: np.ndarray, r: Callable, num_paths: int, output_file: Optional[str] = None, base_seed = None) -> List:
+def simulate_ExpSDHawkes(T: float, background_intensity: Callable, alpha: np.ndarray, beta: np.ndarray, r: Callable, num_paths: int, output_dir: Optional[str] = None, base_seed = None) -> List:
     """
-    Simulate multiple paths using Exp_SDHawkes (efficient exponential kernel implementation).
+    Simulate multiple paths using ExpSDHawkes (efficient exponential kernel implementation).
     
     For validation testing, configured as state-agnostic: r(i,j,y) = 1 and state_matrix = 0. This allows direct comparison with SAHawkes and general SDHawkes implementations.
     
@@ -318,10 +329,10 @@ def simulate_Exp_SDHawkes(T: float, background_intensity: Callable, alpha: np.nd
         State-dependence function (i, j, state) -> float. For validation, returns 1.
     num_paths : int
         Number of independent simulation paths to generate.
-    output_file : str, optional
-        Base path for output files. If None, returns in memory. Default is None.
-    seeds_list : list of SeedSequence, optional
-        List of random seeds, one per path. Default is None.
+    output_dir : str, optional
+        Directory for output files. If None, returns in memory. Default is None.
+    base_seed : int, optional
+        Base random seed for reproducibility. Default is None.
     
     Returns
     -------
@@ -336,8 +347,8 @@ def simulate_Exp_SDHawkes(T: float, background_intensity: Callable, alpha: np.nd
     # Since mu is constant, background_intensity_max = 0
     background_intensity_max = 0.0
     
-    use_disk = output_file is not None
-    obj = Exp_SDHawkes(
+    use_disk = output_dir is not None
+    obj = ExpSDHawkes(
         background_intensity_func=background_intensity,
         background_intensity_max=background_intensity_max,
         state_matrix=state_matrix,
@@ -351,9 +362,9 @@ def simulate_Exp_SDHawkes(T: float, background_intensity: Callable, alpha: np.nd
     
     raw_results = obj.sim(
         T=T,
-        FLLN_scaling=1.0,
         num_paths=num_paths,
-        output_dir=output_file if use_disk else None,
+        FLLN_scaling=1.0,
+        output_dir=output_dir,
         external_info={"alpha": alpha.tolist(), "beta": beta.tolist(), "mu": background_intensity(0, 0).tolist()},
         base_seed=base_seed
     )
@@ -362,9 +373,11 @@ def simulate_Exp_SDHawkes(T: float, background_intensity: Callable, alpha: np.nd
         return raw_results  # (results_list, subfolder_path)
     return [obj.build_paths_list(*triple) for triple in raw_results]
 
-def simulate_SDHawkes(T: float, mu: np.ndarray, alpha: np.ndarray, beta: np.ndarray, num_paths: int, output_file: Optional[str] = None, base_seed: Optional[int] = None) -> List:
+def simulate_SDHawkes(T: float, mu: np.ndarray, alpha: np.ndarray, beta: np.ndarray, num_paths: int, 
+                      background_intensity_func: Callable, excitation_kernel_func: Callable,
+                      output_dir: Optional[str] = None, base_seed: Optional[int] = None) -> List:
     """
-    Simulate multiple paths using general SDHawkes class with manually-coded exponential kernel.
+    Simulate multiple paths using general SDHawkes class with user-provided background and excitation functions.
     
     For validation testing, configured as state-agnostic with manually-implemented exponential excitation kernel. This tests the general simulation framework.
     
@@ -380,10 +393,14 @@ def simulate_SDHawkes(T: float, mu: np.ndarray, alpha: np.ndarray, beta: np.ndar
         Decay rate matrix of shape (dim, dim).
     num_paths : int
         Number of independent simulation paths to generate.
-    output_file : str, optional
-        Base path for output files. Default is None.
-    seeds_list : list of SeedSequence, optional
-        List of random seeds, one per path. Default is None.
+    background_intensity_func : Callable
+        Background intensity function (t, state) -> np.ndarray. Must be defined at module level for pickling.
+    excitation_kernel_func : Callable
+        Excitation kernel function (time_diffs, past_dims, past_states) -> np.ndarray. Must be defined at module level for pickling.
+    output_dir : str, optional
+        Directory for output files. Default is None.
+    base_seed : int, optional
+        Base random seed for reproducibility. Default is None.
     
     Returns
     -------
@@ -393,32 +410,9 @@ def simulate_SDHawkes(T: float, mu: np.ndarray, alpha: np.ndarray, beta: np.ndar
     Notes
     -----
     Uses manually-coded exponential kernel to test general simulation framework.
+    background_intensity_func and excitation_kernel_func must be module-level functions for multiprocessing compatibility.
     """
     dim = len(mu)
-    
-    # Constant background intensity (state-agnostic)
-    def background_intensity_func(t, state):
-        return mu
-    
-    # Manually implement exponential excitation kernel
-    def excitation_kernel_func(time_diffs, past_dims, past_states):
-        """
-        Compute excitation matrix from past arrivals.
-        For exponential kernel: φ_ij(t) = α_ij * exp(-β_ij * t)
-        
-        Returns:
-        --------
-        excitation_matrix : np.ndarray, shape (dim, dim)
-            Entry (i,j) is total excitation to dimension i from all past arrivals in dimension j
-        """
-        excitation_matrix = np.zeros((dim, dim))
-        
-        for k, (dt, j) in enumerate(zip(time_diffs, past_dims)):
-            # Contribution from arrival k (dimension j) to all dimensions i
-            for i in range(dim):
-                excitation_matrix[i, j] += alpha[i, j] * np.exp(-beta[i, j] * dt)
-        
-        return excitation_matrix
     
     # No state changes in state-agnostic case
     state_matrix = np.zeros((1, dim))
@@ -426,7 +420,7 @@ def simulate_SDHawkes(T: float, mu: np.ndarray, alpha: np.ndarray, beta: np.ndar
     # Since mu is constant, background_intensity_max may be set to 0 while still resulting in the correct calculation of Max_intensity in sim.py circa line 300
     background_intensity_max = 0.0
     
-    use_disk = output_file is not None
+    use_disk = output_dir is not None
     obj = SDHawkes(
         background_intensity_func=background_intensity_func,
         excitation_kernel_func=excitation_kernel_func,
@@ -439,9 +433,9 @@ def simulate_SDHawkes(T: float, mu: np.ndarray, alpha: np.ndarray, beta: np.ndar
     
     raw_results = obj.sim(
         T=T,
-        FLLN_scaling=1.0,
         num_paths=num_paths,
-        output_dir=output_file if use_disk else None,
+        FLLN_scaling=1.0,
+        output_dir=output_dir,
         external_info={"alpha": alpha.tolist(), "beta": beta.tolist(), "mu": mu.tolist()},
         base_seed=base_seed
     )
@@ -569,59 +563,64 @@ def Hawkes_2d_sim(T: float, background_intensity: Callable, alpha: np.ndarray, b
 
 
 
-def simulate_2D_SDHawkes(T: float, background_intensity: Callable, alpha: np.ndarray, beta: np.ndarray, r: Callable, FLLN_scaling: float, num_paths: int, max_arrivals: int, output_file: Optional[str] = None, seeds_list: Optional[List] = None) -> List:
+def simulate_2D_SDHawkes(T: float, background_intensity: Callable, alpha: np.ndarray, beta: np.ndarray, r: Callable, FLLN_scaling: float, num_paths: int, max_arrivals: int, output_dir: Optional[str] = None, base_seed: Optional[int] = None) -> List:
     """
-    Simulate multiple paths of 2D state-dependent Hawkes process using specialized 2D implementation.
+    Simulate multiple paths of 2D state-dependent Hawkes process using ExpSDHawkes with parallel infrastructure.
     
     Parameters:
     -----------
     T : float
         Final simulation time
-    mu : np.ndarray, shape (2,)
-        Background intensity vector
+    background_intensity : Callable
+        Background intensity function
     alpha : np.ndarray, shape (2, 2)
         Excitation matrix
     beta : np.ndarray, shape (2, 2)
         Decay rate matrix
-    delta : float
-        State dependence parameter
+    r : Callable
+        State dependence function
     FLLN_scaling : float
         FLLN scaling parameter n
     num_paths : int
         Number of simulation paths
-    output_file : str, optional
-        Base name for output files
+    max_arrivals : int
+        Maximum number of arrivals per path
+    output_dir : str, optional
+        Directory for output files
+    base_seed : int, optional
+        Base random seed for reproducibility
     """
+    dim = 2
+    state_matrix = np.array([[1, -1]])  # 2D state-dependent: state = N_1 - N_2
     
-    sims = [[] for i in range(num_paths)]
-
-    for i in range(num_paths):
-        seed_i = seeds_list[i] if seeds_list is not None else None
-        if output_file is not None:
-            sims[i] = Hawkes_2d_sim(
-                T=T,
-                background_intensity=background_intensity,
-                alpha=alpha,
-                beta=beta,
-                r=r,
-                max_arrivals=max_arrivals,
-                FLLN_scaling=FLLN_scaling,
-                output_file=f"{output_file}_{i}",
-                seed=seed_i
-            )
-        else:
-            sims[i] = Hawkes_2d_sim(
-                T=T,
-                background_intensity=background_intensity,
-                alpha=alpha,
-                beta=beta,
-                r=r,
-                max_arrivals=max_arrivals,
-                FLLN_scaling=FLLN_scaling,
-                seed=seed_i
-            )
+    # Background intensity max for 2D case
+    background_intensity_max = 0.0  # Assuming constant background
     
-    return sims
+    use_disk = output_dir is not None
+    obj = ExpSDHawkes(
+        background_intensity_func=background_intensity,
+        background_intensity_max=background_intensity_max,
+        state_matrix=state_matrix,
+        alpha=alpha,
+        beta=beta,
+        r=r,
+        max_arrivals=max_arrivals,
+        num_workers=4,
+        use_disk=use_disk
+    )
+    
+    raw_results = obj.sim(
+        T=T,
+        num_paths=num_paths,
+        FLLN_scaling=FLLN_scaling,
+        output_dir=output_dir,
+        external_info={"alpha": alpha.tolist(), "beta": beta.tolist()},
+        base_seed=base_seed
+    )
+    
+    if use_disk:
+        return raw_results  # (results_list, subfolder_path)
+    return [obj.build_paths_list(*triple) for triple in raw_results]
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------

@@ -29,7 +29,8 @@ def sim_SDHawkes_once_general(
     use_disk: bool,
     T: float,
     FLLN_scaling: float = 1,
-    output_file: Optional[str] = None,
+    output_dir: Optional[str] = None,
+    output_name: Optional[str] = None,
     seed: Optional[Union[int, np.random.SeedSequence]] = None
 ) -> Union[str, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
     """
@@ -70,15 +71,17 @@ def sim_SDHawkes_once_general(
         Final simulation time. Actual simulation runs on [0, FLLN_scaling * T].
     FLLN_scaling : float, optional
         FLLN scaling parameter n. Extends time horizon to [0, n*T] and automatically rescales states by 1/n when passing to user functions. Default is 1.
-    output_file : str, optional
-        Path to save simulation output. Required if use_disk=True. Default is None.
+    output_dir : str, optional
+        Directory to save simulation output. Required if use_disk=True. Default is None.
+    output_name : str, optional
+        File name for simulation output (appended to output_dir). Required if use_disk=True. Default is None.
     seed : int, np.random.SeedSequence, or None, optional
         Seed for random number generator. If None, uses OS entropy. Default is None.
     
     Returns
     -------
     str or tuple
-        If use_disk=True: returns output_file (str) path to saved data.
+        If use_disk=True: returns full output file path (str) to saved data.
         If use_disk=False: returns tuple (arrival_times_array, arrival_dims_array, arrival_states_array) where:
             - arrival_times_array: np.ndarray of shape (n_arrivals,) with arrival times
             - arrival_dims_array: np.ndarray of shape (n_arrivals,) with dimension indices
@@ -108,7 +111,7 @@ def sim_SDHawkes_once_general(
     ...     dim=2, state_dim=1, state_matrix=state_matrix,
     ...     background_intensity_func=background, background_intensity_max=0.0,
     ...     excitation_kernel_func=kernel, max_arrivals=100000,
-    ...     use_disk=False, T=10.0, seed=42
+    ...     use_disk=False, T=10.0, seed=2026
     ... )
     """
     ## Initialization
@@ -145,8 +148,7 @@ def sim_SDHawkes_once_general(
         # Calculate new background intensity (pass rescaled state)
         background_intensity_vec = background_intensity_func(t, current_state / FLLN_scaling)
 
-        # Update intensities: decay old terms
-        # calculate excitation matrix
+        # Update intensities: re-calculate excitation matrix
         if num_arrivals_so_far > 0:
 
             time_diffs = t - arrival_times_array[:num_arrivals_so_far]
@@ -213,6 +215,7 @@ def sim_SDHawkes_once_general(
     arrival_states_array = arrival_states_array[:total_num_arrivals]
 
     if use_disk:
+        output_file = os.path.join(output_dir, output_name)
         with open(output_file, 'wb') as f:
             pickle.dump((arrival_times_array, arrival_dims_array, arrival_states_array), f)
         return output_file
@@ -233,15 +236,17 @@ def sim_ExpSDHawkes_once(
     use_disk: bool,
     T: float,
     FLLN_scaling: float = 1,
-    output_file: Optional[str] = None,
+    output_dir: Optional[str] = None,
+    output_name: Optional[str] = None,
     seed: Optional[Union[int, np.random.SeedSequence]] = None
 ) -> Union[str, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
     """
     Simulate one sample path of a state-dependent Hawkes process with exponential kernels using efficient update formulas.
     
-    This specialized implementation exploits the exponential kernel structure to avoid recomputing excitation from all past arrivals at each step. Instead, it uses a simple matrix exponential update, dramatically improving computational efficiency compared to the general algorithm.
+    This specialized implementation exploits the exponential kernel structure to avoid recomputing excitation from all past arrivals at each time step of Ogata's modified thinning algorithm. Instead, it uses a simple time-decay update (which is only possible due to the exponential structure), dramatically improving computational efficiency compared to the general algorithm.
     
-    The excitation kernel has the form: φ_ij(t, y) = r_ij(y) * α_ij * exp(-β_ij * t)
+    The excitation kernel has the form: 
+    φ_ij(t, y) = r_ij(y) * α_ij * exp(-β_ij * t)
     where r_ij(y) provides state-dependent multiplicative scaling.
     
     Parameters
@@ -277,17 +282,18 @@ def sim_ExpSDHawkes_once(
     T : float
         Final simulation time. Actual simulation runs on [0, FLLN_scaling * T].
     FLLN_scaling : float, optional
-        FLLN scaling parameter n. Extends time horizon to [0, n*T] and automatically
-        rescales states by 1/n when passing to user functions. Default is 1.
-    output_file : str, optional
-        Path to save simulation output. Required if use_disk=True. Default is None.
+        FLLN scaling parameter n. Extends time horizon to [0, n*T] and automatically rescales states by 1/n when passing to user functions. Default is 1.
+    output_dir : str, optional
+        Directory to save simulation output. Required if use_disk=True. Default is None.
+    output_name : str, optional
+        File name for simulation output (appended to output_dir). Required if use_disk=True. Default is None.
     seed : int, np.random.SeedSequence, or None, optional
         Seed for random number generator. If None, uses OS entropy. Default is None.
     
     Returns
     -------
     str or tuple
-        If use_disk=True: returns output_file (str) path to saved data.
+        If use_disk=True: returns full output file path (str) to saved data.
         If use_disk=False: returns tuple (arrival_times_array, arrival_dims_array, arrival_states_array) where:
             - arrival_times_array: np.ndarray of shape (n_arrivals,) with arrival times
             - arrival_dims_array: np.ndarray of shape (n_arrivals,) with dimension indices
@@ -384,12 +390,321 @@ def sim_ExpSDHawkes_once(
     arrival_states_array = arrival_states_array[:total_num_arrivals]
 
     if use_disk:
+        output_file = os.path.join(output_dir, output_name)
         with open(output_file, 'wb') as f:
             pickle.dump((arrival_times_array, arrival_dims_array, arrival_states_array), f)
         return output_file
     else:
         return arrival_times_array, arrival_dims_array, arrival_states_array
 
+
+def sim_ExpSAHawkes_once(
+    mu: np.ndarray,
+    alpha: np.ndarray,
+    beta: np.ndarray,
+    dim: int,
+    max_arrivals: int,
+    use_disk: bool,
+    T: float,
+    FLLN_scaling: float = 1,
+    output_dir: Optional[str] = None,
+    output_name: Optional[str] = None,
+    seed: Optional[Union[int, np.random.SeedSequence]] = None
+) -> Union[str, Tuple[np.ndarray, np.ndarray]]:
+    """
+    Simulate one sample path of a state-agnostic Hawkes process with exponential kernels using Ogata's thinning algorithm.
+    
+    This is a module-level function designed to be picklable for multiprocessing. It implements a standard (non-state-dependent) multivariate Hawkes process where intensity depends only on past arrivals, not on any evolving state. Uses exponential kernels for efficient O(dim^2) updates per arrival. This is equivalent to sim_ExpSDHawkes_once() when r_ij(y) = 1 for all i,j.
+    
+    The intensity for dimension i at time t is:
+        λ_i(t) = μ_i + Σ_j ∫_0^t α_{ij} * exp(-β_{ij} * (t - s)) dN_j(s)
+    
+    Parameters
+    ----------
+    mu : np.ndarray
+        Background intensity vector of shape (dim,).
+    alpha : np.ndarray
+        Excitation matrix of shape (dim, dim).
+        Entry (i,j) is the jump in λ_i when dimension j has an arrival.
+    beta : np.ndarray
+        Decay rate matrix of shape (dim, dim).
+        Entry (i,j) is the exponential decay rate for excitation from j to i.
+    dim : int
+        Number of dimensions (types) in the Hawkes process.
+    max_arrivals : int
+        Maximum number of arrivals before terminating simulation (safety cutoff).
+    use_disk : bool
+        If True, write arrivals to disk at the end of simulation. If False, all arrival information returned as arrays (and thus remain in memory).
+    T : float
+        Final simulation time. Actual simulation runs on [0, FLLN_scaling * T].
+    FLLN_scaling : float, optional
+        Scaling parameter. Extends time horizon to [0, FLLN_scaling * T].
+        For state-agnostic processes this only affects the time horizon (no state rescaling).
+        Default is 1.
+    output_dir : str, optional
+        Directory path where output file will be saved. Required if use_disk=True. Default is None.
+    output_name : str, optional
+        Name of output file (e.g., "sim_0000.pkl"). Required if use_disk=True. Default is None.
+    seed : int, np.random.SeedSequence, or None, optional
+        Seed for random number generator. If None, uses OS entropy. Default is None.
+    
+    Returns
+    -------
+    str or tuple
+        If use_disk=True: returns full output file path (str) where data was saved.
+            Disk format: pickle file containing tuple (arrival_times_array, arrival_dims_array).
+        If use_disk=False: returns tuple (arrival_times_array, arrival_dims_array) where:
+            - arrival_times_array: np.ndarray of shape (n_arrivals,) with arrival times
+            - arrival_dims_array: np.ndarray of shape (n_arrivals,) with dimension indices (0 to dim-1)
+    
+    Notes
+    -----
+    - Uses efficient O(dim^2) matrix exponential decay updates per arrival.
+    - Excitation matrix is updated via: excitation_matrix *= exp(-beta * dt) at each time step.
+    - For parallel execution via multiprocessing, this function must remain at module level.
+    
+    See Also
+    --------
+    sim_ExpSDHawkes_once : State-dependent exponential kernel implementation.
+    sim_SDHawkes_once_general : General kernel implementation.
+    """
+    ## Initialization
+    rng = np.random.default_rng(seed)
+    ones_vec = np.ones(dim)
+    T_eff = T * FLLN_scaling
+    max_size = int(max_arrivals * FLLN_scaling)
+    arrival_times_array = np.zeros(max_size)
+    arrival_dims_array = np.zeros(max_size, dtype=int)
+
+    # Iteratively updated variables
+    num_arrivals_so_far = 0
+    current_time = 0.0
+    excitation_matrix = np.zeros((dim, dim))
+    current_intensities_vec = mu.copy()
+
+    while current_time < T_eff and num_arrivals_so_far < max_size:
+
+        previous_intensities_vec = current_intensities_vec
+
+        # Upper bound on intensity: sum of current intensities (valid because background is constant and excitation decays)
+        Max_intensity = np.sum(previous_intensities_vec)
+
+        # Generate next candidate arrival time
+        next_time = current_time + rng.exponential(scale=1.0 / Max_intensity)
+
+        # Decay excitation terms
+        time_diff = next_time - current_time
+        excitation_matrix *= np.exp(-beta * time_diff)
+        current_intensities_vec = mu + excitation_matrix @ ones_vec
+
+        # Accept or reject the arrival
+        U = rng.uniform(0, Max_intensity)
+        if U <= np.sum(current_intensities_vec) and next_time <= T_eff:
+
+            # Determine which dimension the arrival belongs to
+            cumsum_intensity_vec = np.cumsum(current_intensities_vec)
+            d = np.searchsorted(cumsum_intensity_vec, U)
+
+            arrival_times_array[num_arrivals_so_far] = next_time
+            arrival_dims_array[num_arrivals_so_far] = d
+            num_arrivals_so_far += 1
+
+            # Update excitation: add new jump in column d
+            excitation_matrix[:, d] += alpha[:, d]
+            excitation_vec = excitation_matrix @ ones_vec
+            current_intensities_vec = mu + excitation_vec
+
+        # Update current time (whether arrival was accepted or rejected)
+        current_time = next_time
+
+    # Write any remaining arrivals in buffer
+    if use_disk:
+        output_file = os.path.join(output_dir, output_name)
+        with open(output_file, 'wb') as f:
+            pickle.dump((arrival_times_array, arrival_dims_array), f)
+        return output_file
+    else:
+        # Truncate arrays to actual number of arrivals
+        total_num_arrivals = num_arrivals_so_far
+        return arrival_times_array[:total_num_arrivals], arrival_dims_array[:total_num_arrivals]
+
+
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+## MODULE-LEVEL FUNCTIONS: Parallel simulation infrastructure
+
+def _data_for_parallel_sims(
+    num_sims: int,
+    use_disk: bool = True,
+    subfolder_path: Optional[str] = None,
+    child_seeds: Optional[List[np.random.SeedSequence]] = None
+) -> List[Tuple[Optional[int], Optional[str], Optional[np.random.SeedSequence]]]:
+    """
+    Generate per-simulation data tuples for the parallel simulation framework.
+    
+    Creates a list of data tuples, one per simulation, containing the simulation index, output directory path, and random seed. This data is passed to worker processes via the _sim_wrapper function.
+    
+    Parameters
+    ----------
+    num_sims : int
+        Number of simulations to prepare data for.
+    use_disk : bool, optional
+        If True, includes simulation indices for unique filenames in disk mode.
+        If False (memory mode), indices and paths are None. Default is True.
+    subfolder_path : str, optional
+        Path to subfolder where simulation files should be saved.
+        Only used if use_disk=True. Default is None.
+    child_seeds : list of np.random.SeedSequence, optional
+        Pre-spawned child seeds from SeedSequence.spawn(), one per simulation.
+        If None, seeds will be None (OS entropy used). Default is None.
+
+    Returns
+    -------
+    list of tuple
+        List of length num_sims where each element is a 3-tuple:
+        (sim_index_or_None, subfolder_path_or_None, seed_or_None).
+        In disk mode: (int, str, SeedSequence).
+        In memory mode: (None, None, SeedSequence).
+    
+    Notes
+    -----
+    This function is designed to work with _sim_wrapper which unpacks these tuples.
+    """
+    if child_seeds is None:
+        child_seeds = [None] * num_sims
+    if use_disk:
+        return [(i, subfolder_path, child_seeds[i]) for i in range(num_sims)]
+    else:
+        # Always include index for sorting after parallel execution
+        return [(i, None, child_seeds[i]) for i in range(num_sims)]
+
+def _process_single_sim(
+    func_and_params: Tuple[Callable, Tuple[Optional[int], Optional[str], Optional[np.random.SeedSequence]]]
+) -> Union[str, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """
+    Top-level helper that multiprocessing.Pool maps over. Unpacks the (sim_func, per_sim_data) tuple and dispatches to sim_func.
+    
+    Unpacks the (sim_func, per_sim_data) tuple and calls sim_func with per_sim_data.
+    Must be a module-level function (not a lambda or nested function) to be picklable
+    by multiprocessing.
+    
+    Parameters
+    ----------
+    func_and_params : tuple
+        2-tuple of (sim_func, per_sim_data) where:
+        - sim_func: Callable, partially applied _sim_wrapper with T and FLLN_scaling bound
+        - per_sim_data: 3-tuple (sim_index, subfolder_path, seed)
+        
+    Returns
+    --------
+    tuple
+        (sim_index, result) where result is:
+        - If disk mode: output filename (str)
+        - If memory mode: (arrival_times_array, arrival_dims_array, arrival_states_array) tuple
+    """
+    sim_func, per_sim_data = func_and_params
+    sim_index = per_sim_data[0]  # Extract index from per_sim_data
+    result = sim_func(per_sim_data)
+    return (sim_index, result)
+
+def _sim_wrapper(
+    sim_partial: Callable,
+    T: float,
+    FLLN_scaling: float,
+    per_sim_data: Tuple[Optional[int], Optional[str], Optional[np.random.SeedSequence]]
+) -> Union[str, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """
+    Wrapper that constructs output file paths and calls the simulation function.
+
+    This function is designed to be used with functools.partial to bind sim_partial, T, and FLLN_scaling, leaving only per_sim_data as the free parameter that varies across simulations.
+    
+    Parameters
+    ----------
+    sim_partial : functools.partial or Callable
+        Partially applied module-level simulation function (sim_SDHawkes_once_general or sim_ExpSDHawkes_once) with all instance-level parameters already bound.
+        Expected signature: sim_partial(T, FLLN_scaling, output_dir, output_name, seed) -> result
+    T : float
+        Final simulation time (before FLLN scaling).
+    FLLN_scaling : float
+        FLLN scaling parameter n. Actual simulation runs on [0, n*T].
+    per_sim_data : tuple
+        3-tuple of (sim_index_or_None, subfolder_path_or_None, seed_or_None).
+        If sim_index is not None: disk mode, constructs output_name = "sim_{sim_index:04d}.pkl".
+        If sim_index is None: memory mode, output_dir and output_name are None.
+
+    Returns
+    -------
+    str or tuple
+        Disk mode: returns full output file path (str).
+        Memory mode: returns tuple (arrival_times_array, arrival_dims_array, arrival_states_array).
+    
+    Notes
+    -----
+    This wrapper enables pickling for multiprocessing by using functools.partial
+    """
+    sim_index, subfolder_path, seed = per_sim_data
+    if sim_index is not None:
+        output_dir = subfolder_path
+        output_name = f"sim_{sim_index:04d}.pkl"
+    else:
+        output_dir = None
+        output_name = None
+    return sim_partial(T, FLLN_scaling, output_dir, output_name, seed)
+
+def _run_parallel_sims(
+    data: List[Tuple[Optional[int], Optional[str], Optional[np.random.SeedSequence]]],
+    sim_func: Callable,
+    num_workers: int
+) -> List[Union[str, Tuple[np.ndarray, np.ndarray, np.ndarray]]]:
+    """
+    Run multiple Hawkes simulations in parallel using multiprocessing.Pool.
+    
+    Distributes simulations across worker processes with a progress bar.
+    Each worker receives independent random seeds to ensure reproducible, non-overlapping random streams.
+    
+    Parameters
+    ----------
+    data : list of tuple
+        List of per-simulation data from _data_for_parallel_sims.
+        Each element is a 3-tuple (sim_index, subfolder_path, seed).
+    sim_func : callable
+        Partially applied _sim_wrapper with sim_partial, T, and FLLN_scaling bound.
+        Remaining signature: sim_func(per_sim_data) -> result
+    num_workers : int
+        Number of parallel worker processes to use
+        
+    Returns:
+    --------
+    list
+        List of simulation results with length equal to len(data).
+        If using disk mode: list of output filenames (str)
+        If using memory mode: list of (arrival_times_array, arrival_dims_array, arrival_states_array) tuples
+    """
+    total_sims = len(data)
+    print(f"\nRunning {total_sims} parallel simulations with {num_workers} workers...")
+    
+    # Pair each per-sim data item with the simulation function
+    func_and_params = [(sim_func, per_sim_data) for per_sim_data in data]
+    
+    # Use imap_unordered for better performance, then sort by index to preserve order
+    with Pool(processes=num_workers) as pool:
+        indexed_results = list(tqdm(
+            pool.imap_unordered(_process_single_sim, func_and_params),
+            total=total_sims,
+            desc="Simulations progress",
+            dynamic_ncols=True,
+            mininterval=0.1
+        ))
+    
+    # Sort results by simulation index to ensure consistent ordering
+    indexed_results.sort(key=lambda x: x[0])
+    
+    # Extract just the results (drop indices)
+    result_list = [result for _, result in indexed_results]
+    
+    return result_list
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -501,8 +816,7 @@ class SDHawkes:
         state_matrix : np.ndarray
             Stored state update matrix
         dim : int
-            Number of dimensions in the Hawkes process, inferred from the output 
-            shape of background_intensity_func(0)
+            Number of dimensions in the Hawkes process, inferred from the output shape of background_intensity_func(0)
         max_arrivals: int = 500000,
             Maximum number of arrivals for each simulation
         num_workers: int = 1,
@@ -579,18 +893,20 @@ class SDHawkes:
 
     def _make_sim_partial(self):
         """ 
-        Create a picklable partial of the module-level simulation function with all fixed (instance-level) parameters bound. The returned callable has signature:
-            sim_partial(T, FLLN_scaling, output_file) -> result
+        Create a picklable partial of the module-level simulation function with all fixed (instance-level) parameters bound.
+        
+        The returned callable has signature:
+            sim_partial(T, FLLN_scaling, output_dir, output_name, seed) -> result
         
         This is used by sim() to create a function that can be safely sent to worker processes without pickling `self` or any bound methods.
         
         IMPORTANT: For this to be picklable by multiprocessing, all user-provided callables (background_intensity_func, excitation_kernel_func) must be defined at module level in the user's script (not lambdas or nested functions).
         
-        Returns:
-        --------
+        Returns
+        -------
         functools.partial
-            Partial of sim_SDHawkes_once_general with fixed params bound.
-            Remaining free parameters: T (float), FLLN_scaling (float), output_file (str or None)
+            Partial of sim_SDHawkes_once_general with fixed instance parameters bound.
+            Remaining free parameters: T (float), FLLN_scaling (float), output_dir (str or None), output_name (str or None), seed (SeedSequence or None)
         """
         return partial(sim_SDHawkes_once_general,
             self.dim, self.state_dim, self.state_matrix,
@@ -598,33 +914,44 @@ class SDHawkes:
             self.excitation_kernel_func, self.max_arrivals, self.use_disk)
 
 
-    def sim(self, T:float, FLLN_scaling:float, num_paths:int, output_dir:str=None, external_info:dict=None, base_seed=None):
+    def sim(self, T:float, num_paths:int, FLLN_scaling:float=1, output_dir:str=None, external_info:dict=None, base_seed=None):
         """
         Run (possibly FLLN-scaled) parallel simulations of the state-dependent Hawkes process.
         
-        Simulates num_paths independent paths on [0, FLLN_scaling * T], with states rescaled by 1/FLLN_scaling inside user functions Uses multiprocessing for parallelism when num_workers > 1.
+        Simulates num_paths independent paths on [0, FLLN_scaling * T], with states rescaled by 1/FLLN_scaling inside user functions. Uses multiprocessing for parallelism when num_workers > 1. Results are returned in a deterministic order regardless of completion order.
         
-        Parameters:
-        -----------
+        Parameters
+        ----------
         T : float
-            Final time for the FLLN-scaled simulation
-        FLLN_scaling : float
-            Scaling parameter n for FLLN
+            Final time for the FLLN-scaled simulation (before scaling).
         num_paths : int
-            Number of independent simulation paths to generate
+            Number of independent simulation paths to generate.
+        FLLN_scaling : float, optional
+            Scaling parameter n for FLLN. Actual simulation runs on [0, n*T]. Default is 1.
         output_dir : str, optional
-            Directory for output files. Required if use_disk=True.
+            Directory for output files. Required if use_disk=True. A timestamped subfolder will be created.
         external_info : dict, optional
-            User-provided parameters to write to the simulation parameter file (e.g., alpha, beta, mu, delta). Only used if use_disk=True.
+            User-provided parameters to write to the simulation parameter file (e.g., alpha, beta, mu). 
+            Only used if use_disk=True. Default is None.
+        base_seed : int, np.random.SeedSequence, or None, optional
+            Base seed for reproducible random number generation. If provided, spawns independent child seeds for each simulation path using np.random.SeedSequence. If None, uses OS entropy. Default is None.
             
-        Returns:
-        --------
-        If use_disk=True:
-            tuple : (results_list, subfolder_path)
-                - results_list: list of output filenames (str)
-                - subfolder_path: path to the folder containing simulation files
-        If use_disk=False:
-            list : list of (arrival_times_array, arrival_dims_array, arrival_states_array) tuples, one per simulation path
+        Returns
+        -------
+        tuple or list
+            If use_disk=True:
+                tuple of (results_list, subfolder_path) where:
+                - results_list: list of str, output file paths for each simulation
+                - subfolder_path: str, path to the timestamped subfolder containing all simulation files
+            If use_disk=False:
+                list of tuples, one per simulation path, where each tuple is:
+                (arrival_times_array, arrival_dims_array, arrival_states_array)
+        
+        Notes
+        -----
+        - Uses imap_unordered for parallel execution efficiency, then sorts results by simulation index.
+        - Independent random seeds ensure reproducible, non-overlapping random streams across workers.
+        - Background intensity and excitation functions must be defined at module level for multiprocessing.
         """
         # Validate output_dir for disk mode
         if self.use_disk and output_dir is None:
@@ -913,7 +1240,7 @@ class SDHawkes:
 ## Subclass: Exponential Excitation Kernel with multiplicative state dependence
 
 
-class Exp_SDHawkes(SDHawkes):
+class ExpSDHawkes(SDHawkes):
     """
     Subclass of SDHawkes specialized for exponential excitation kernels with 
     multiplicative state dependence. Contains an optimized simulation algorithm 
@@ -989,8 +1316,7 @@ class Exp_SDHawkes(SDHawkes):
     @staticmethod
     def _build_exponential_excitation_kernel_func(alpha:np.ndarray, beta:np.ndarray, r:Callable, dim:int) -> Callable:
         """
-        Build an exponential excitation kernel function for Hawkes processes with exponential kernels
-        and multiplicatively-factored state dependence, i.e., 
+        Build an exponential excitation kernel function for Hawkes processes with exponential kernels and multiplicatively-factored state dependence, i.e., 
             φ_{ij}(t,y) = r_{ij}(y) α_{ij} e^{-β_{ij} t}
         NOTE: The constructed function is not used within the simulation code, but is constructed to retain compatibility with the general class structure.
 
@@ -1049,12 +1375,10 @@ class Exp_SDHawkes(SDHawkes):
                 Y_j = past_states[mask]      # shape (n_j, m)
 
                 # decay for this source-dimension j against all target i
-                # shape: (d, n_j)
-                decay = np.exp(-beta[:, j, None] * td_j[None, :])
+                decay = np.exp(-beta[:, j, None] * td_j[None, :]) # shape: (d, n_j)
 
                 # evaluate r_{ij}(y_k) for fixed j, all i, all k
-                # shape: (d, n_j)
-                R = np.empty((dim, len(td_j)), dtype=float)
+                R = np.empty((dim, len(td_j)), dtype=float) # shape: (d, n_j)
                 for i in range(dim):
                     R[i] = np.array([r(i,j,y) for y in Y_j])
 
@@ -1070,269 +1394,128 @@ class Exp_SDHawkes(SDHawkes):
     # wrapper for module-level Exponential SDHawkes simulation function
     def _make_sim_partial(self):
         """
-        Create a picklable partial of the exponential simulation function with all fixed (instance-level) parameters bound. The returned callable has signature:
-            sim_partial(T, FLLN_scaling, output_file) -> result
+        Create a picklable partial of the exponential simulation function with all fixed (instance-level) parameters bound.
+        
+        The returned callable has signature:
+            sim_partial(T, FLLN_scaling, output_dir, output_name, seed) -> result
         
         Overrides SDHawkes._make_sim_partial to use sim_ExpSDHawkes_once with exponential-specific parameters (alpha, beta, r) instead of the general excitation_kernel_func.
         
         IMPORTANT: For this to be picklable by multiprocessing, all user-provided callables (background_intensity_func, r) must be defined at module level in the user's script (not lambdas or nested functions).
         
-        Returns:
-        --------
+        Returns
+        -------
         functools.partial
-            Partial of sim_ExpSDHawkes_once with fixed params bound.
-            Remaining free parameters: T (float), FLLN_scaling (float), output_file (str or None)
+            Partial of sim_ExpSDHawkes_once with fixed instance parameters bound.
+            Remaining free parameters: T (float), FLLN_scaling (float), output_dir (str or None), output_name (str or None), seed (SeedSequence or None)
         """
         return partial(sim_ExpSDHawkes_once,
             self.dim, self.state_dim, self.state_matrix,
             self.background_intensity_func, self.background_intensity_max,
             self.alpha, self.beta, self.r, self.max_arrivals, self.use_disk)
 
-    def sim(self, T:float, FLLN_scaling:float=1, num_paths:int=1, output_dir:str=None, external_info:dict=None, base_seed=None):
-        # TODO: update docstring for parallel simulation
-        """
-        Run (potentially FLLN-scaled) parallel simulations of the state-dependent Hawkes process. 
-        
-        Simulates num_paths independent paths on [0, FLLN_scaling * T], with states rescaled by 1/FLLN_scaling inside user functions Uses multiprocessing for parallelism when self.num_workers > 1.
 
-        Each path is simulated up to time FLLN_scaling * T using Ogata's modified thinning algorithm, but specifically for Hawkes processes with exponential kernels and multiplicatively-factored state dependence, i.e., 
-            φ_{ij}(t,y) = r_{ij}(y) α_{ij} e^{-β_{ij} t}
-        We overwrite the general SDHawkes simulation algorithm because for this form of excitation there is a simple update formula for efficient computation of excitation terms, dramatically speeding up simulation time.
-        
-        Parameters:
-        -----------
-        T : float
-            Final time for the FLLN-scaled simulation
-        FLLN_scaling : float
-            Scaling parameter n for FLLN
-        num_paths : int
-            Number of independent simulation paths to generate
-        output_dir : str, optional
-            Directory for output files. Required if use_disk=True.
-        external_info : dict, optional
-            User-provided parameters to write to the simulation parameter file (e.g., alpha, beta, mu, delta). Only used if use_disk=True.
-            
-        Returns:
-        --------
-        If use_disk=True:
-            tuple : (results_list, subfolder_path)
-                - results_list: list of output filenames (str)
-                - subfolder_path: path to the folder containing simulation files
-        If use_disk=False:
-            list : list of (arrival_times_array, arrival_dims_array, arrival_states_array) tuples, one per simulation path
-        
-        Notes:
-        ------
-        - Uses instance attributes: alpha, beta, r (excitation parameters)
-        - Uses instance methods: background_intensity_func, state_matrix
-        - Assumes constant background intensity and exponentially decaying excitation
-        - Automatically passes rescaled states (state/n) to background_intensity_func and r function
-        """
-
-        # Validate output_dir for disk mode
-        if self.use_disk and output_dir is None:
-            raise ValueError("output_dir must be provided when use_disk=True")
-
-        # Create timestamped subfolder if using disk
-        subfolder_path = None
-        if self.use_disk:
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            subfolder_name = f"FLLN_n{FLLN_scaling}_T{T}_paths{num_paths}_{timestamp}"
-            subfolder_path = os.path.join(output_dir, subfolder_name)
-            os.makedirs(subfolder_path, exist_ok=True)
-            print(f"Created simulation folder: {subfolder_path}")
-            
-            # Write simulation parameters to text file
-            param_file = self.write_simulation_parameters(subfolder_path, output_dir, FLLN_scaling, T, num_paths, timestamp, external_info)
-            print(f"Saved simulation parameters to: {param_file}")
-        
-        # Build a picklable partial of the module-level simulation function with all instance parameters to remove references to self.
-        sim_partial = self._make_sim_partial()
-        
-        # Pass sim_partial into a partially evaluated _sim_wrapper along with other function-call-specific parameters.
-        sim_func = partial(_sim_wrapper, sim_partial, T, FLLN_scaling)
-        
-        # Spawn independent child seeds from SeedSequence for each simulation path
-        ss = np.random.SeedSequence(base_seed)
-        child_seeds = ss.spawn(num_paths)
-        
-        # Generate per-simulation data (sim indices + seeds for disk mode, seeds only for memory mode)
-        data = _data_for_parallel_sims(num_paths, use_disk=self.use_disk, subfolder_path=subfolder_path, child_seeds=child_seeds)
-        
-        # Run parallel simulations
-        results_list = _run_parallel_sims(data, sim_func, self.num_workers)
-
-        if self.use_disk:
-            return results_list, subfolder_path
-        else:
-            return results_list
-
-
-
-#------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-#------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-#------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-#------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-## MODULE-LEVEL FUNCTIONS: Parallel simulation infrastructure
-
-def _data_for_parallel_sims(
-    num_sims: int,
-    use_disk: bool = True,
-    subfolder_path: Optional[str] = None,
-    child_seeds: Optional[List[np.random.SeedSequence]] = None
-) -> List[Tuple[Optional[int], Optional[str], Optional[np.random.SeedSequence]]]:
+class ExpSAHawkes(SDHawkes):
     """
-    Generate per-simulation data tuples for the parallel simulation framework.
+    State-Agnostic Hawkes process with exponential excitation kernels.
     
-    Creates a list of data tuples, one per simulation, containing the simulation index,
-    output directory path, and random seed. This data is passed to worker processes
-    via the _sim_wrapper function.
+    Implements a standard (non-state-dependent) multivariate Hawkes process where intensity only depends on past arrivals, not on any evolving state. Inherits from SDHawkes and uses exponential kernels for efficient O(dim^2) time decay updates.
     
+    The intensity for dimension i at time t is:
+        λ_i(t) = μ_i + Σ_j ∫_0^t α_{ij} * exp(-β_{ij} * (t - s)) dN_j(s)
+
     Parameters
     ----------
-    num_sims : int
-        Number of simulations to prepare data for.
+    mu : np.ndarray
+        Background intensity vector of shape (dim,).
+        Constant baseline intensity for each dimension.
+    alpha : np.ndarray
+        Excitation matrix of shape (dim, dim).
+        Entry (i,j) is the jump in λ_i when dimension j has an arrival.
+    beta : np.ndarray
+        Decay rate matrix of shape (dim, dim).
+        Entry (i,j) is the exponential decay rate for excitation from j to i.
+    max_arrivals : int, optional
+        Maximum number of arrivals before terminating (safety cutoff). Default is 1,000,000.
     use_disk : bool, optional
-        If True, includes simulation indices for unique filenames in disk mode.
-        If False (memory mode), indices and paths are None. Default is True.
-    subfolder_path : str, optional
-        Path to subfolder where simulation files should be saved.
-        Only used if use_disk=True. Default is None.
-    child_seeds : list of np.random.SeedSequence, optional
-        Pre-spawned child seeds from SeedSequence.spawn(), one per simulation.
-        If None, seeds will be None (OS entropy used). Default is None.
-
-    Returns
-    -------
-    list of tuple
-        List of length num_sims where each element is a 3-tuple:
-        (sim_index_or_None, subfolder_path_or_None, seed_or_None).
-        In disk mode: (int, str, SeedSequence).
-        In memory mode: (None, None, SeedSequence).
+        If True, simulations write output to disk. If False, keep all arrivals in memory. Default is True.
+    num_workers : int, optional
+        Number of parallel worker processes for multi-path simulations. Default is 1.
+    
+    Attributes
+    ----------
+    dim : int
+        Number of dimensions in the process.
+    mu : np.ndarray
+        Background intensity vector.
+    alpha : np.ndarray
+        Excitation matrix.
+    beta : np.ndarray
+        Decay rate matrix.
+    
+    Raises
+    ------
+    ValueError
+        If stability condition ρ(α_{ij}/β_{ij}) < 1 (where ρ is spectral radius) is not satisfied.
+    
+    Examples
+    --------
+    >>> mu = np.array([100.0, 80.0])
+    >>> alpha = np.array([[0.5, 0.1], [0.1, 0.5]])
+    >>> beta = np.ones((2, 2))
+    >>> hawkes = ExpSAHawkes(mu, alpha, beta)
+    >>> results = hawkes.sim(T=10.0, num_paths=100, base_seed=2026)
     
     Notes
     -----
-    This function is designed to work with _sim_wrapper which unpacks these tuples.
+    - Stability condition ρ(α_{ij}/β_{ij}) < 1 is checked in __init__.
+    - Uses Ogata's modified thinning algorithm via sim_ExpSAHawkes_once.
+    - Efficient O(dim^2) updates per arrival using matrix exponential decay.
+    - Supports parallel multi-path simulation via inherited sim() method.
+    - For parallel execution, uses multiprocessing with proper seed spawning.
     """
-    if child_seeds is None:
-        child_seeds = [None] * num_sims
-    if use_disk:
-        return [(i, subfolder_path, child_seeds[i]) for i in range(num_sims)]
-    else:
-        return [(None, None, child_seeds[i]) for i in range(num_sims)]
+    def __init__(
+        self,
+        mu: np.ndarray,
+        alpha: np.ndarray,
+        beta: np.ndarray,
+        max_arrivals: int = 1000000,
+        use_disk: bool = True,
+        num_workers: int = 1
+    ):
 
-def _process_single_sim(
-    func_and_params: Tuple[Callable, Tuple[Optional[int], Optional[str], Optional[np.random.SeedSequence]]]
-) -> Union[str, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    """
-    Top-level helper that multiprocessing.Pool maps over. Unpacks the
-    (sim_func, per_sim_data) tuple and dispatches to sim_func.
-    
-    Unpacks the (sim_func, per_sim_data) tuple and calls sim_func with per_sim_data.
-    Must be a module-level function (not a lambda or nested function) to be picklable
-    by multiprocessing.
-    
-    Parameters
-    ----------
-    func_and_params : tuple
-        2-tuple of (sim_func, per_sim_data) where:
-        - sim_func: Callable, partially applied _sim_wrapper with T and FLLN_scaling bound
-        - per_sim_data: 3-tuple (sim_index, subfolder_path, seed)
+        # Check stability condition
+        H = alpha / beta
+        rho = np.max(np.linalg.eigvals(H))
+        if rho >= 1:
+            raise ValueError("Spectral radius of H := (α_ij/β_ij)_ij must be strictly less than 1")
         
-    Returns
-    --------
-    str or tuple
-        If disk mode: returns output filename (str)
-        If memory mode: returns (arrival_times_array, arrival_dims_array, arrival_states_array) tuple
-    """
-    sim_func, per_sim_data = func_and_params
-    return sim_func(per_sim_data)
+        self.mu = mu
+        self.alpha = alpha
+        self.beta = beta
+        self.dim = len(mu)
+        self.max_arrivals = max_arrivals
+        self.use_disk = use_disk
+        self.num_workers = num_workers
 
-def _sim_wrapper(
-    sim_partial: Callable,
-    T: float,
-    FLLN_scaling: float,
-    per_sim_data: Tuple[Optional[int], Optional[str], Optional[np.random.SeedSequence]]
-) -> Union[str, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    """
-    Wrapper that constructs output file paths and calls the simulation function.
 
-    This function is designed to be used with functools.partial to bind sim_partial, T, and FLLN_scaling, leaving only per_sim_data as the free parameter that varies across simulations.
-    
-    Parameters
-    ----------
-    sim_partial : functools.partial or Callable
-        Partially applied module-level simulation function (sim_SDHawkes_once_general
-        or sim_ExpSDHawkes_once) with all instance-level parameters already bound.
-        Expected signature: sim_partial(T, FLLN_scaling, output_file, seed) -> result
-    T : float
-        Final simulation time (before FLLN scaling).
-    FLLN_scaling : float
-        FLLN scaling parameter n. Actual simulation runs on [0, n*T].
-    per_sim_data : tuple
-        3-tuple of (sim_index_or_None, subfolder_path_or_None, seed_or_None).
-        If sim_index is not None: disk mode, constructs output_file = "{subfolder_path}/sim_{sim_index:04d}.pkl".
-        If sim_index is None: memory mode, output_file = None.
-
-    Returns
-    -------
-    str or tuple
-        Disk mode: returns output_file path (str).
-        Memory mode: returns tuple (arrival_times_array, arrival_dims_array, arrival_states_array).
-    
-    Notes
-    -----
-    This wrapper enables pickling for multiprocessing by using functools.partial
-    """
-    sim_index, subfolder_path, seed = per_sim_data
-    if sim_index is not None:
-        output_file = f"{subfolder_path}/sim_{sim_index:04d}.pkl"
-    else:
-        output_file = None
-    return sim_partial(T, FLLN_scaling, output_file, seed)
-
-def _run_parallel_sims(
-    data: List[Tuple[Optional[int], Optional[str], Optional[np.random.SeedSequence]]],
-    sim_func: Callable,
-    num_workers: int
-) -> List[Union[str, Tuple[np.ndarray, np.ndarray, np.ndarray]]]:
-    """
-    Run multiple Hawkes simulations in parallel using multiprocessing.Pool.
-    
-    Distributes simulations across worker processes with a progress bar.
-    Each worker receives independent random seeds to ensure reproducible,
-    non-overlapping random streams.
-    
-    Parameters
-    ----------
-    data : list of tuple
-        List of per-simulation data from _data_for_parallel_sims.
-        Each element is a 3-tuple (sim_index, subfolder_path, seed).
-    sim_func : callable
-        Partially applied _sim_wrapper with sim_partial, T, and FLLN_scaling bound.
-        Remaining signature: sim_func(per_sim_data) -> result
-    num_workers : int
-        Number of parallel worker processes to use
+    def _make_sim_partial(self):
+        """ 
+        Create a picklable partial of the module-level simulation function with all fixed (instance-level) parameters bound.
         
-    Returns:
-    --------
-    list
-        List of simulation results with length equal to len(data).
-        If using disk mode: list of output filenames (str)
-        If using memory mode: list of (arrival_times_array, arrival_dims_array, arrival_states_array) tuples
-    """
-    total_sims = len(data)
-    print(f"\nRunning {total_sims} parallel simulations with {num_workers} workers...")
+        The returned callable has signature:
+            sim_partial(T, FLLN_scaling, output_dir, output_name, seed) -> result
+        
+        This is used by sim() to create a function that can be safely sent to worker processes without pickling `self` or any bound methods.
+        
+        Returns
+        -------
+        functools.partial
+            Partial of sim_ExpSAHawkes_once with fixed instance parameters bound.
+            Remaining free parameters: T (float), FLLN_scaling (float), output_dir (str or None), output_name (str or None), seed (SeedSequence or None)
+        """
+        return partial(
+            sim_ExpSAHawkes_once,
+            self.mu, self.alpha, self.beta,
+            self.dim, self.max_arrivals, self.use_disk)
     
-    # Pair each per-sim data item with the simulation function
-    func_and_params = [(sim_func, per_sim_data) for per_sim_data in data]
-    
-    with Pool(processes=num_workers) as pool:
-        result_list = list(tqdm(
-            pool.imap_unordered(_process_single_sim, func_and_params),
-            total=total_sims,
-            desc="Simulations progress",
-            dynamic_ncols=True,
-            mininterval=0.1
-        ))
-    return result_list

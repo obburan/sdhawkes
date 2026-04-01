@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 
 from validation import (
     simulate_SAHawkes,
-    simulate_Exp_SDHawkes,
+    simulate_ExpSDHawkes,
     simulate_SDHawkes,
     simulate_2D_SDHawkes,
     compare_paths,
@@ -38,7 +38,7 @@ BASE_OUTPUT_DIR = str(Path(__file__).resolve().parents[2] / "Simulation_Outputs"
 VALIDATION_DIR = os.path.join(BASE_OUTPUT_DIR, "Validation")
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-## Single-Path Comparison Parameters
+## Multi-Path Comparison Parameters
 
 # 2D Hawkes process parameters for equivalence testing
 MU_2D = np.array([200.0, 120.0])  # 2D background intensity vector
@@ -47,8 +47,7 @@ ALPHA_2D = np.array([[0.8, 0.18], [0.18, 0.8]])  # Very unstable excitation matr
 # ALPHA_2D = np.array([[0.3, 0.2], [0.2, 0.3]])  # Very stable: stable for all states
 BETA_2D = np.ones_like(ALPHA_2D)  # Decay matrix (all ones)
 
-# Single path simulation settings
-NUM_PATHS_SINGLE = 1  # Number of paths for *exact (path-by-path)* equivalence testing
+# Multi-path comparison settings
 MAX_ARRIVALS_SINGLE = 500000  # Maximum arrivals per path
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -88,6 +87,28 @@ def r_2d(i: int, j: int, y: float) -> float:
 def r_1d(i: int, j: int, y: float) -> float:
     """No state dependence in excitation kernel for 1D process."""
     return 1.0
+
+def excitation_kernel_2d(time_diffs, past_dims, past_states):
+    """
+    Exponential excitation kernel for 2D process (for general SDHawkes).
+    φ_ij(t) = α_ij * exp(-β_ij * t)
+    """
+    excitation_matrix = np.zeros((2, 2))
+    for k, (dt, j) in enumerate(zip(time_diffs, past_dims)):
+        for i in range(2):
+            excitation_matrix[i, j] += ALPHA_2D[i, j] * np.exp(-BETA_2D[i, j] * dt)
+    return excitation_matrix
+
+def excitation_kernel_1d(time_diffs, past_dims, past_states):
+    """
+    Exponential excitation kernel for 1D process (for general SDHawkes).
+    φ_ij(t) = α_ij * exp(-β_ij * t)
+    """
+    excitation_matrix = np.zeros((1, 1))
+    for k, (dt, j) in enumerate(zip(time_diffs, past_dims)):
+        for i in range(1):
+            excitation_matrix[i, j] += ALPHA_1D[i, j] * np.exp(-BETA_1D[i, j] * dt)
+    return excitation_matrix
 
 def process_simulations(sims: List[Tuple], mu: np.ndarray, alpha: np.ndarray, beta: np.ndarray, time_grid: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -131,157 +152,62 @@ if __name__ == "__main__":
     print("HAWKES PROCESS VALIDATION SUITE")
     print("="*80)
     print("\nThis script validates multiple Hawkes process implementations by:")
-    print("1. Single-path comparison: Checking if different implementations produce identical results")
+    print("1. Multi-path comparison: Checking if different implementations produce identical results")
     print("2. Monte Carlo comparison: Comparing simulations against analytical solutions")
     print("3. Statistical analysis: Computing statistics on maximum differences across multiple MC runs")
     print("="*80 + "\n")
     
     #------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-    ## PART 1: Path Simulation Exactness Comparison
+    ## PART 1: Multi-Path Cross-Implementation Comparison
     """
-    The three simulation scripts: SAHawkes, SDHawkes (general), and Exp_SDHawkes, should not only produce paths distributed the same, but should be exactly the same in the special case we have constructed. This takes on two forms relevant to us:
-    - Single paths being exactly identical: there is no reason the first paths produced from the same random seed should not be exactly the same.
-    - Potential seeding issues across multiple paths: when using parallel simulation (for the state-dependent simulations, as parallel simulation is not implemented for state-agnostic Hawkes), the resultant paths should be exactly the same as those produced by the state-agnostic Hawkes. In particular, we should not have that the seeds update in any different way between the different simulations (note that we use num_workers=4 in the definition of the state-dependent simulation functions within validation.py)
+    The simulation scripts (SAHawkes, SDHawkes, ExpSDHawkes, 2D_SDHawkes) should produce exactly identical paths in the special case we have constructed. This validates:
+    - Path exactness: All implementations produce identical arrival times and dimensions
+    - Seeding correctness: Parallel execution with SeedSequence spawning produces consistent results
+      across implementations (note: we use num_workers=4 for state-dependent simulations)
     """
     
     print("="*80)
-    print("PART 1: SINGLE-PATH SIMULATION COMPARISON")
+    print("PART 1: MULTI-PATH CROSS-IMPLEMENTATION COMPARISON")
     print("="*80)
-    print("\nComparing 4 implementations with identical random seed:")
+    NUM_PATHS_MULTI = 5
+    print(f"\nComparing 4 implementations with {NUM_PATHS_MULTI} paths each:")
     print("  - SAHawkes (state-agnostic)")
-    print("  - Exp_SDHawkes (exponential kernel state-dependent)")
+    print("  - ExpSDHawkes (exponential kernel state-dependent)")
     print("  - SDHawkes (general state-dependent)")
     print("  - 2D_SDHawkes (2D-specific state-dependent)")
     print(f"\nParameters: μ={MU_2D}, α={ALPHA_2D[0]}, β={BETA_2D[0]}")
     print(f"Time horizon: T={T}, Seed: {SEED}\n")
     
-    # Spawn reproducible child seeds from SeedSequence for cross-implementation comparison
-    ss_single = np.random.SeedSequence(SEED)
-    single_seeds = ss_single.spawn(NUM_PATHS_SINGLE)
-    
-    print("Running SAHawkes simulation...")
-    SA_sims = simulate_SAHawkes(
-        T=T,
-        mu=MU_2D,
-        alpha=ALPHA_2D,
-        beta=BETA_2D,
-        num_paths=NUM_PATHS_SINGLE,
-        seeds_list=single_seeds
-    )
-    print("Number of SAHawkes arrivals:", sum(len(SA_sims[0][0][d]) for d in range(len(SA_sims[0][0]))))
-    
-    print("Running Exp_SDHawkes simulation...")
-    Exp_SD_sims = simulate_Exp_SDHawkes(
-        T=T,
-        background_intensity=background_intensity_func_2d,
-        alpha=ALPHA_2D,
-        beta=BETA_2D,
-        r=r_2d,
-        num_paths=NUM_PATHS_SINGLE,
-        seeds_list=single_seeds
-    )
-    print("Number of Exp_SDHawkes arrivals:", sum(len(Exp_SD_sims[0][0][d]) for d in range(len(Exp_SD_sims[0][0]))))
-    
-    print("Running SDHawkes simulation...")
-    SD_sims = simulate_SDHawkes(
-        T=T,
-        mu=MU_2D,
-        alpha=ALPHA_2D,
-        beta=BETA_2D,
-        num_paths=NUM_PATHS_SINGLE,
-        seeds_list=single_seeds
-    )
-    print("Number of SDHawkes arrivals:", sum(len(SD_sims[0][0][d]) for d in range(len(SD_sims[0][0]))))
-    
-    print("Running 2D_SDHawkes simulation...")
-    SD2d_sims = simulate_2D_SDHawkes(
-        T=T,
-        background_intensity=background_intensity_func_2d,
-        alpha=ALPHA_2D,
-        beta=BETA_2D,
-        r=r_2d,
-        FLLN_scaling=1.0,
-        num_paths=NUM_PATHS_SINGLE,
-        max_arrivals=MAX_ARRIVALS_SINGLE,
-        seeds_list=single_seeds
-    )
-    print("Number of 2D_SDHawkes arrivals:", sum(len(SD2d_sims[0][0][d]) for d in range(len(SD2d_sims[0][0]))))
-    
-    print("\nAll simulations complete!")
-    
-    # Compare simulation results
-    print("\n" + "="*80)
-    print("COMPARISON: Checking if simulations produce identical results...")
-    print("="*80 + "\n")
-    
-    # Extract first path from each simulation for comparison
-    sa_path = SA_sims[0]
-    exp_sd_path = Exp_SD_sims[0]
-    sd_path = SD_sims[0]
-    sd2d_path = SD2d_sims[0]
-    
-    print("1. Comparing SAHawkes vs Exp_SDHawkes:")
-    match_1 = compare_paths(sa_path, exp_sd_path)
-    print(f"   Result: {'✓ IDENTICAL' if match_1 else '✗ DIFFERENT'}\n")
-    
-    print("2. Comparing SAHawkes vs SDHawkes:")
-    match_2 = compare_paths(sa_path, sd_path)
-    print(f"   Result: {'✓ IDENTICAL' if match_2 else '✗ DIFFERENT'}\n")
-    
-    print("3. Comparing SAHawkes vs 2D_SDHawkes:")
-    match_3 = compare_paths(sa_path, sd2d_path)
-    print(f"   Result: {'✓ IDENTICAL' if match_3 else '✗ DIFFERENT'}\n")
-    
-    print("4. Comparing Exp_SDHawkes vs SDHawkes:")
-    match_4 = compare_paths(exp_sd_path, sd_path)
-    print(f"   Result: {'✓ IDENTICAL' if match_4 else '✗ DIFFERENT'}\n")
-    
-    print("="*80)
-    if all([match_1, match_2, match_3, match_4]):
-        print("SUCCESS: All implementations produce IDENTICAL results! ✓")
-    else:
-        print("WARNING: Implementations produce DIFFERENT results. Debug needed.")
-    print("="*80 + "\n")
-    
-    #------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-    ## PART 1b: Multi-Path Cross-Implementation Overlap Check
-    
-    print("="*80)
-    print("PART 1b: MULTI-PATH CROSS-IMPLEMENTATION OVERLAP CHECK")
-    print("="*80)
-    NUM_PATHS_MULTI = 5
-    print(f"\nGenerating {NUM_PATHS_MULTI} paths from each implementation with SeedSequence")
-    print(f"Parameters: μ={MU_2D}, α={ALPHA_2D[0]}, β={BETA_2D[0]}")
-    print(f"Time horizon: T={T}, Seed: {SEED}\n")
-    
-    # Spawn reproducible child seeds for multi-path comparison
-    ss_multi = np.random.SeedSequence(SEED)
-    multi_seeds = ss_multi.spawn(NUM_PATHS_MULTI)
-    
     print(f"Running {NUM_PATHS_MULTI} SAHawkes simulations...")
-    SA_multi = simulate_SAHawkes(T=T, mu=MU_2D, alpha=ALPHA_2D, beta=BETA_2D, num_paths=NUM_PATHS_MULTI, seeds_list=multi_seeds)
+    SA_multi = simulate_SAHawkes(T=T, mu=MU_2D, alpha=ALPHA_2D, beta=BETA_2D, num_paths=NUM_PATHS_MULTI, base_seed=SEED)
     
-    print(f"Running {NUM_PATHS_MULTI} Exp_SDHawkes simulations...")
-    Exp_SD_multi = simulate_Exp_SDHawkes(T=T, background_intensity=background_intensity_func_2d, alpha=ALPHA_2D, beta=BETA_2D, r=r_2d, num_paths=NUM_PATHS_MULTI, seeds_list=multi_seeds)
+    print(f"Running {NUM_PATHS_MULTI} ExpSDHawkes simulations...")
+    Exp_SD_multi = simulate_ExpSDHawkes(T=T, background_intensity=background_intensity_func_2d, alpha=ALPHA_2D, beta=BETA_2D, r=r_2d, num_paths=NUM_PATHS_MULTI, base_seed=SEED)
+    
+    print(f"Running {NUM_PATHS_MULTI} SDHawkes simulations...")
+    SD_multi = simulate_SDHawkes(T=T, mu=MU_2D, alpha=ALPHA_2D, beta=BETA_2D, num_paths=NUM_PATHS_MULTI, background_intensity_func=background_intensity_func_2d, excitation_kernel_func=excitation_kernel_2d, base_seed=SEED)
     
     print(f"Running {NUM_PATHS_MULTI} 2D_SDHawkes simulations...")
-    SD2d_multi = simulate_2D_SDHawkes(T=T, background_intensity=background_intensity_func_2d, alpha=ALPHA_2D, beta=BETA_2D, r=r_2d, FLLN_scaling=1.0, num_paths=NUM_PATHS_MULTI, max_arrivals=MAX_ARRIVALS_SINGLE, seeds_list=multi_seeds)
+    SD2d_multi = simulate_2D_SDHawkes(T=T, background_intensity=background_intensity_func_2d, alpha=ALPHA_2D, beta=BETA_2D, r=r_2d, FLLN_scaling=1.0, num_paths=NUM_PATHS_MULTI, max_arrivals=MAX_ARRIVALS_SINGLE, base_seed=SEED)
     
     print(f"\nAll multi-path simulations complete!\n")
     
-    print("Comparing SAHawkes vs Exp_SDHawkes (path-by-path):")
-    multi_match_1 = compare_implementations_multi_path(SA_multi, Exp_SD_multi, "SAHawkes", "Exp_SDHawkes")
+    print("Comparing SAHawkes vs ExpSDHawkes (path-by-path):")
+    multi_match_1 = compare_implementations_multi_path(SA_multi, Exp_SD_multi, "SAHawkes", "ExpSDHawkes")
+    
+    print("\nComparing SAHawkes vs SDHawkes (path-by-path):")
+    multi_match_2 = compare_implementations_multi_path(SA_multi, SD_multi, "SAHawkes", "SDHawkes")
     
     print("\nComparing SAHawkes vs 2D_SDHawkes (path-by-path):")
-    multi_match_2 = compare_implementations_multi_path(SA_multi, SD2d_multi, "SAHawkes", "2D_SDHawkes")
+    multi_match_3 = compare_implementations_multi_path(SA_multi, SD2d_multi, "SAHawkes", "2D_SDHawkes")
     
-    print("\nComparing Exp_SDHawkes vs 2D_SDHawkes (path-by-path):")
-    multi_match_3 = compare_implementations_multi_path(Exp_SD_multi, SD2d_multi, "Exp_SDHawkes", "2D_SDHawkes")
+    print("\nComparing ExpSDHawkes vs SDHawkes (path-by-path):")
+    multi_match_4 = compare_implementations_multi_path(Exp_SD_multi, SD_multi, "ExpSDHawkes", "SDHawkes")
     
     print("\n" + "="*80)
-    multi_all_match = all([multi_match_1, multi_match_2, multi_match_3])
+    multi_all_match = all([multi_match_1, multi_match_2, multi_match_3, multi_match_4])
     if multi_all_match:
-        print(f"SUCCESS: All {NUM_PATHS_MULTI} paths match across all implementations! ✓")
+        print(f"SUCCESS: All {NUM_PATHS_MULTI} paths match across all 4 implementations!")
     else:
         print(f"WARNING: Some paths differ between implementations. Debug needed.")
     print("="*80 + "\n")
@@ -319,16 +245,18 @@ if __name__ == "__main__":
     plot_paths.append(plot_count_comparison(time_grid, sa_mean_count, analytical_count, "SAHawkes", output_dir_mc, NUM_MC_PATHS))
     plot_paths.append(plot_intensity_comparison(time_grid, sa_mean_intensity, analytical_intensity, "SAHawkes", output_dir_mc, NUM_MC_PATHS))
     
-    # 2. Exp_SDHawkes
-    print(f"Running {NUM_MC_PATHS} Exp_SDHawkes simulations (1D)...")
-    exp_sd_sims = simulate_Exp_SDHawkes(T=T, background_intensity=background_intensity_func_1d, alpha=ALPHA_1D, beta=BETA_1D, r=r_1d, num_paths=NUM_MC_PATHS)
+    # 2. ExpSDHawkes
+    print(f"Running {NUM_MC_PATHS} ExpSDHawkes simulations (1D)...")
+    exp_sd_sims = simulate_ExpSDHawkes(T=T, background_intensity=background_intensity_func_1d, alpha=ALPHA_1D, beta=BETA_1D, r=r_1d, num_paths=NUM_MC_PATHS)
     exp_sd_mean_count, exp_sd_mean_intensity = process_simulations(exp_sd_sims, MU_1D, ALPHA_1D, BETA_1D, time_grid)
-    plot_paths.append(plot_count_comparison(time_grid, exp_sd_mean_count, analytical_count, "Exp_SDHawkes", output_dir_mc, NUM_MC_PATHS))
-    plot_paths.append(plot_intensity_comparison(time_grid, exp_sd_mean_intensity, analytical_intensity, "Exp_SDHawkes", output_dir_mc, NUM_MC_PATHS))
+    plot_paths.append(plot_count_comparison(time_grid, exp_sd_mean_count, analytical_count, "ExpSDHawkes", output_dir_mc, NUM_MC_PATHS))
+    plot_paths.append(plot_intensity_comparison(time_grid, exp_sd_mean_intensity, analytical_intensity, "ExpSDHawkes", output_dir_mc, NUM_MC_PATHS))
     
     # 3. SDHawkes
     print(f"Running {NUM_MC_PATHS} SDHawkes simulations (1D)...")
-    sd_sims = simulate_SDHawkes(T=T, mu=MU_1D, alpha=ALPHA_1D, beta=BETA_1D, num_paths=NUM_MC_PATHS)
+    sd_sims = simulate_SDHawkes(T=T, mu=MU_1D, alpha=ALPHA_1D, beta=BETA_1D, num_paths=NUM_MC_PATHS, 
+                                background_intensity_func=background_intensity_func_1d, 
+                                excitation_kernel_func=excitation_kernel_1d)
     sd_mean_count, sd_mean_intensity = process_simulations(sd_sims, MU_1D, ALPHA_1D, BETA_1D, time_grid)
     plot_paths.append(plot_count_comparison(time_grid, sd_mean_count, analytical_count, "SDHawkes", output_dir_mc, NUM_MC_PATHS))
     plot_paths.append(plot_intensity_comparison(time_grid, sd_mean_intensity, analytical_intensity, "SDHawkes", output_dir_mc, NUM_MC_PATHS))
@@ -336,7 +264,7 @@ if __name__ == "__main__":
     # Note: 2D_SDHawkes is skipped for 1D validation as it's hardcoded for 2D processes
     
     print(f"\nMonte-Carlo Analytical Comparison complete!")
-    print(f"Number of methods validated: 3 (SAHawkes, Exp_SDHawkes, SDHawkes)")
+    print(f"Number of methods validated: 3 (SAHawkes, ExpSDHawkes, SDHawkes)")
     print(f"Plots saved to: {output_dir_mc}")
     for plot_path in plot_paths:
         print(f"  - {os.path.basename(plot_path)}")
@@ -364,8 +292,8 @@ if __name__ == "__main__":
         sa_max_diffs_count.append(np.max(np.abs(sa_mean_count_run - analytical_count)))
         sa_max_diffs_intensity.append(np.max(np.abs(sa_mean_intensity_run - analytical_intensity)))
         
-        # Exp_SDHawkes
-        exp_sd_sims_run = simulate_Exp_SDHawkes(T=T, background_intensity=background_intensity_func_1d, 
+        # ExpSDHawkes
+        exp_sd_sims_run = simulate_ExpSDHawkes(T=T, background_intensity=background_intensity_func_1d, 
                                                  alpha=ALPHA_1D, beta=BETA_1D, r=r_1d, num_paths=NUM_MC_PATHS)
         exp_sd_mean_count_run, exp_sd_mean_intensity_run = process_simulations(exp_sd_sims_run, MU_1D, ALPHA_1D, BETA_1D, time_grid)
         exp_sd_max_diffs_count.append(np.max(np.abs(exp_sd_mean_count_run - analytical_count)))
@@ -390,7 +318,7 @@ if __name__ == "__main__":
     print(f"Intensity - Std Dev Max Diff: {np.std(sa_max_diffs_intensity):.6e}")
     
     print("\n" + "="*80)
-    print("RESULTS: Exp_SDHawkes")
+    print("RESULTS: ExpSDHawkes")
     print("="*80)
     print(f"Count - Mean Max Diff: {np.mean(exp_sd_max_diffs_count):.6f}")
     print(f"Count - Variance Max Diff: {np.var(exp_sd_max_diffs_count):.6e}")
@@ -427,7 +355,7 @@ if __name__ == "__main__":
         f.write(f"Intensity - Max Max Diff: {np.max(sa_max_diffs_intensity):.6f}\n\n")
         
         f.write("="*70 + "\n")
-        f.write("Exp_SDHawkes\n")
+        f.write("ExpSDHawkes\n")
         f.write("="*70 + "\n")
         f.write(f"Count - Mean Max Diff: {np.mean(exp_sd_max_diffs_count):.6f}\n")
         f.write(f"Count - Variance Max Diff: {np.var(exp_sd_max_diffs_count):.6e}\n")
@@ -451,8 +379,7 @@ if __name__ == "__main__":
     print("="*80)
     print(f"\nAll results saved to: {output_dir_mc}")
     print("\nSummary:")
-    print(f"  - Single-path comparison: {'✓ PASSED' if all([match_1, match_2, match_3, match_4]) else '✗ FAILED'}")
-    print(f"  - Multi-path overlap ({NUM_PATHS_MULTI} paths): {'✓ PASSED' if multi_all_match else '✗ FAILED'}")
+    print(f"  - Multi-path comparison ({NUM_PATHS_MULTI} paths): {'PASSED' if multi_all_match else 'FAILED'}")
     print(f"  - Monte Carlo plots: {len(plot_paths)} plots generated")
     print(f"  - Statistical analysis: {NUM_MC_RUNS} runs completed")
     print("="*80)
