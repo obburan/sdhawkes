@@ -1526,7 +1526,7 @@ class ExpSDHawkes(SDHawkes):
                 - np.ndarray: Excitation matrix, shape (dim, dim)
                   Entry [i,j] is the total excitation to dimension i from all past arrivals in dimension j
             """
-            out = np.zeros(dim)
+            out = np.zeros((dim,dim))
             for j in range(dim):
                 mask = (past_dims == j)
                 if not np.any(mask):
@@ -1546,7 +1546,7 @@ class ExpSDHawkes(SDHawkes):
                 # contribution from this j to each out_i
                 # alpha[:, j] has shape (d,)
                 # result shape: (d,)
-                out += alpha[:, j] * np.sum(R * decay, axis=1)
+                out[:,j] += alpha[:, j] * np.sum(R * decay, axis=1)
 
             return out
 
@@ -1659,8 +1659,88 @@ class MultiExpSDHawkes(SDHawkes):
         self.beta = beta
         self.r = r
         # TODO: build backup excitation kernel function for compatibility 
-        #self.excitation_kernel_func = self._build_exponential_excitation_kernel_func(alpha,beta,r,self.dim)
+        #self.excitation_kernel_func = self._build_exponential_excitation_kernel_func(alpha,beta,r,self.dim,self.third_dim)
 
+    @staticmethod
+    def _build_multiexponential_excitation_kernel_func(alpha:np.ndarray, beta:np.ndarray, r:Callable, dim:int, third_dim:int) -> Callable:
+        """
+        Build an exponential excitation kernel function for Hawkes processes with exponential kernels and multiplicatively-factored state dependence, i.e., 
+            φ_{ij}(t,y) = sum_k r_{ijk}(y) α_{ijk} e^{-β_{ijk} t}
+        NOTE: The constructed function is not used within the simulation code, but is constructed to retain compatibility with the general class structure.
+
+        Parameters:
+        -----------
+        alpha : np.ndarray
+            Excitation parameter matrix, shape (dim, dim, third_dim).
+            alpha[i,j,k] represents the magnitude of excitation from dimension j to dimension i, along the kth summand.
+        
+        beta : np.ndarray
+            Decay parameter matrix, shape (dim, dim, third_dim).
+            beta[i,j,k] is the exponential decay rate for excitation from j to i, along the kth summand.
+        
+        r : Callable
+            State-dependent amplification function.
+            Signature: r(i, j, k, y) -> float
+            Arguments:
+                - i (int): Dimension index (from 0 to dim-1)
+                - j (int): Dimension index (from 0 to dim-1)
+                - k (int): Index for the sum over k
+                - y (float or np.ndarray): Current state value
+            Returns:
+                - float: Amplification factor for excitation kernel element at (i,j) for given state y
+            Example: For state-dependent damping with scalar parameter delta and scalar-valued states:
+                def r(i, j, k, state):
+                    return (1+delta)**(-state) 
+        """
+        def excitation_kernel_func(time_diffs,past_dims,past_states) -> np.ndarray:
+            """
+            NOTE: This function is not used within the simulation code, but is constructed to retain compatibility with the existing code structure.
+            As such, we implement a very sub-optimal version of this function.
+
+            excitation_kernel_func : Callable
+            Function that computes the full excitation matrix from the history of arrivals.
+            Signature: excitation_kernel_func(time_diffs, past_dims, past_states) -> np.ndarray
+            
+            Arguments:
+                - time_diffs (np.ndarray): Time elapsed since each past arrival, shape (n_past,)
+                  Index z gives time since the z-th arrival (z=0 is first arrival)
+                - past_dims (np.ndarray): Dimension of each past arrival, shape (n_past,)
+                  Index z gives dimension (0 to dim-1) of the z-th arrival
+                - past_states (np.ndarray): State just before each past arrival
+                  If state_dim=1: shape (n_past,), index z gives scalar state before z-th arrival
+                  If state_dim>1: shape (n_past, state_dim), index z gives state vector before z-th arrival
+            
+            Returns:
+                - np.ndarray: Excitation matrix, shape (dim, dim)
+                  Entry [i,j] is the total excitation to dimension i from all past arrivals in dimension j.
+            """
+            out = np.zeros((dim,dim))
+            
+            for j in range(dim):
+                mask = (past_dims == j)
+                if not np.any(mask):
+                    continue
+
+                td_j = time_diffs[mask]         # shape (n_j,)
+                Y_j = past_states[mask]      # shape (n_j, m)
+
+                # decay for this source-dimension j against all target i
+                # For each exponential component k, compute contribution
+                for k in range(third_dim):
+                    # Decay for component k: shape (dim, n_j)
+                    decay_k = np.exp(-beta[:, j, k, None] * td_j[None, :])
+                    
+                    # State-dependence for component k: shape (dim, n_j)
+                    R_k = np.empty((dim, len(td_j)), dtype=float)
+                    for i in range(dim):
+                        R_k[i] = np.array([r(i, j, k, y) for y in Y_j])
+                    
+                    # Contribution from component k
+                    out[:, j] += alpha[:, j, k] * np.sum(R_k * decay_k, axis=1)
+
+            return out
+
+        return excitation_kernel_func
 
     def _make_sim_partial(self):
         """
