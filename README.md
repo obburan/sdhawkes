@@ -143,7 +143,7 @@ These reductions make it easy to benchmark the state-dependent simulator against
    - Use the utilities in `Examples/SDHawkes_2d_sim.py` (e.g., `compute_FLLN_ODE_difference`, plotting helpers) or craft your own analytics.
 
 
-### Core Components
+### Files
 
 | File | Description |
 | --- | --- |
