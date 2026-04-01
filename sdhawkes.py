@@ -246,7 +246,7 @@ def sim_ExpSDHawkes_once(
     This specialized implementation exploits the exponential kernel structure to avoid recomputing excitation from all past arrivals at each time step of Ogata's modified thinning algorithm. Instead, it uses a simple time-decay update (which is only possible due to the exponential structure), dramatically improving computational efficiency compared to the general algorithm.
     
     The excitation kernel has the form: 
-    φ_ij(t, y) = r_ij(y) * α_ij * exp(-β_ij * t)
+        φ_ij(t, y) = r_ij(y) * α_ij * exp(-β_ij * t),
     where r_ij(y) provides state-dependent multiplicative scaling.
     
     Parameters
@@ -397,6 +397,167 @@ def sim_ExpSDHawkes_once(
     else:
         return arrival_times_array, arrival_dims_array, arrival_states_array
 
+def sim_MultiExpSDHawkes_once(dim: int,
+    state_dim: int,
+    state_matrix: np.ndarray,
+    background_intensity_func: Callable[[float, np.ndarray], np.ndarray],
+    background_intensity_max: float,
+    alpha: np.ndarray,
+    beta: np.ndarray,
+    r: Callable[[int, int, np.ndarray], float],
+    max_arrivals: int,
+    use_disk: bool,
+    T: float,
+    FLLN_scaling: float = 1,
+    output_dir: Optional[str] = None,
+    output_name: Optional[str] = None,
+    seed: Optional[Union[int, np.random.SeedSequence]] = None):
+    """
+    In this version, we simulate another special Markovian case of SDHawkes. In this setting, the excitation is given by:
+        φ_ij(t, y) = r_ijk(y) * sum_{k=1}^L α_ijk * exp(-β_ijk * t)
+    where r_ijk(y) provides state-dependent multiplicative scaling. This is a generalization of ExpSDHawkes, and useful because sums of exponentials can, to some extent, approximate more complex functions such as power-law decays (see "Optimal approximations of power-laws with exponentials", 2006, by Bochud and Challet).
+
+    Parameters
+    ----------
+    dim : int
+        Number of dimensions (types) in the Hawkes process.
+    state_dim : int
+        Dimensionality of the state space. Use 1 for scalar state.
+    state_matrix : np.ndarray
+        State transition matrix. Shape (state_dim, dim) or (1, dim) for scalar state.
+        Entry (i, j) specifies how state component i changes when dimension j has an arrival.
+    background_intensity_func : Callable[[float, np.ndarray], np.ndarray]
+        Function with signature (t, state) -> intensity_vector.
+        Returns background intensity vector of shape (dim,) at time t given state.
+        State is automatically rescaled by 1/FLLN_scaling before being passed to this function.
+    background_intensity_max : float
+        Maximum possible change in background intensity per dimension over any time interval.
+        Used as upper bound in thinning algorithm. Set to 0 if background is constant.
+    alpha : np.ndarray
+        Excitation parameter matrix of shape (dim, dim, third_dim).
+        Entry (i, j, k) is the jump magnitude in intensity of dimension i when dimension j.
+    beta : np.ndarray
+        Decay rate matrix of shape (dim, dim, third_dim).
+        Entry (i, j, k) is the exponential decay rate for excitation from dimension j to dimension i.
+    r : Callable[[int, int, int, np.ndarray], float]
+        State-dependence function with signature (i, j, k, state) -> scalar, where (i,j,k) in [dim] x [dim] x [third_dim]
+        Returns multiplicative scaling factor for excitation from dimension j to dimension i, along the kth summand, given state.
+        State is automatically rescaled by 1/FLLN_scaling before being passed to this function.
+    max_arrivals : int
+        Maximum number of arrivals before terminating simulation (safety cutoff).
+    use_disk : bool
+        If True, write arrivals to disk at the end of the simulation. If False, keep all arrivals in memory.
+    T : float
+        Final simulation time. Actual simulation runs on [0, FLLN_scaling * T].
+    FLLN_scaling : float, optional
+        FLLN scaling parameter n. Extends time horizon to [0, n*T] and automatically rescales states by 1/n when passing to user functions. Default is 1.
+    output_dir : str, optional
+        Directory to save simulation output. Required if use_disk=True. Default is None.
+    output_name : str, optional
+        File name for simulation output (appended to output_dir). Required if use_disk=True. Default is None.
+    seed : int, np.random.SeedSequence, or None, optional
+        Seed for random number generator. If None, uses OS entropy. Default is None.
+    
+    Returns
+    -------
+    str or tuple
+        If use_disk=True: returns full output file path (str) to saved data.
+        If use_disk=False: returns tuple (arrival_times_array, arrival_dims_array, arrival_states_array) where:
+            - arrival_times_array: np.ndarray of shape (n_arrivals,) with arrival times
+            - arrival_dims_array: np.ndarray of shape (n_arrivals,) with dimension indices
+            - arrival_states_array: np.ndarray of shape (n_arrivals,) or (n_arrivals, state_dim) with states
+    """
+    ## Initialization
+    rng = np.random.default_rng(seed)
+    third_dim = np.shape(alpha)[2]
+    ones_vec = np.ones(dim)
+    max_size = int(max_arrivals * FLLN_scaling)
+    arrival_times_array = np.zeros(max_size)
+    arrival_dims_array = np.zeros(max_size, dtype=int)
+    if state_dim == 1:
+        arrival_states_array = np.zeros(max_size)
+    else:
+        arrival_states_array = np.zeros((max_size, state_dim))
+    # Iteratively updted variables
+    t = 0
+    current_state = np.zeros(state_dim)
+    num_arrivals_so_far = 0 # We cut the simulation off after enough arrivals
+    # Self-excitation terms
+    excitation_tensor = np.zeros((dim, dim, third_dim))
+    excitation_vec = np.zeros(dim)
+    # Cumulative intensity
+    current_intensity_vec = background_intensity_func(t, current_state / FLLN_scaling) # intensity has no excitation before the first arrival
+    
+    while (t < T * FLLN_scaling) and (num_arrivals_so_far < max_arrivals*FLLN_scaling): #FLLN scaling because we simulate on an extended horizon when FLLN > 1.
+
+        # Update what the previous intensity vector was        
+        previous_intensity_vec = current_intensity_vec
+
+        # Upper bound on intensity: current intensity (because we assume a constant background intensity and decaying excitation terms)
+        Max_intensity = np.sum(previous_intensity_vec) + dim * background_intensity_max
+        
+        t_old = t
+        t += rng.exponential(1/Max_intensity)
+        U = rng.uniform(0,Max_intensity)
+
+        # Calculate new intensities as time progresses
+        # Update intensities: decay old excitation terms
+        time_diff = t - t_old
+
+        excitation_tensor *= np.exp(-beta * time_diff) # decay excitation terms (now along 3-dimensions)
+        excitation_vec = excitation_tensor.sum(axis=2) @ ones_vec # sum rows to get total intensity for each dimension
+        # Update background intensity due to time progression (pass rescaled state)
+        background_intensity_vec = background_intensity_func(t, current_state / FLLN_scaling)
+        current_intensity_vec = background_intensity_vec + excitation_vec # total intensity for each dimension
+
+        # Accept or reject arrival
+        if (t < T * FLLN_scaling) and (U <= np.sum(current_intensity_vec)):
+            # divide current intensity value into bins to figure out which dimension the new arrival belongs to
+            cumsum_intensity_vec = np.cumsum(current_intensity_vec)
+            d = np.searchsorted(cumsum_intensity_vec, U)
+            previous_state = current_state
+            arrival_type = np.zeros(dim)
+            arrival_type[d] = 1
+            if state_dim == 1:
+                current_state = previous_state + state_matrix[0, d]
+            else:
+                current_state = previous_state + state_matrix @ arrival_type
+
+            arrival_times_array[num_arrivals_so_far] = t
+            arrival_dims_array[num_arrivals_so_far] = d
+            if state_dim == 1:
+                arrival_states_array[num_arrivals_so_far] = previous_state[0]
+            else:
+                arrival_states_array[num_arrivals_so_far] = previous_state
+            
+            num_arrivals_so_far += 1 #IMPORTANT: increment must be after the above storing since num_arrivals_so_far is used for indexing the above arrays
+
+            # Calculate new background intensity; uses new state because in the algorithm it plays a role in the next arrival
+            background_intensity_vec = background_intensity_func(t, current_state / FLLN_scaling)
+
+            # Pass rescaled state to r function; note that state used should be the one just before the arrival
+            r_mat = np.array([[r(i, d, k, previous_state / FLLN_scaling) for k in range(third_dim)] for i in range(dim)]) # shape (dim, L)
+            # Update intensities: add new jump
+            excitation_tensor[:, d, :] += alpha[:, d, :] * r_mat # Add new jump in column d; note that we use r_mat which uses the state ust before arrival
+            excitation_vec = excitation_tensor.sum(axis=2) @ ones_vec # sum rows to get total intensity for each dimension
+            
+            current_intensity_vec = background_intensity_vec + excitation_vec # total intensity for each dimension
+    
+    # Truncate arrays to actual number of arrivals
+    total_num_arrivals = num_arrivals_so_far
+    arrival_times_array = arrival_times_array[:total_num_arrivals]
+    arrival_dims_array = arrival_dims_array[:total_num_arrivals]
+    arrival_states_array = arrival_states_array[:total_num_arrivals]
+
+    if use_disk:
+        output_file = os.path.join(output_dir, output_name)
+        with open(output_file, 'wb') as f:
+            pickle.dump((arrival_times_array, arrival_dims_array, arrival_states_array), f)
+        return output_file
+    else:
+        return arrival_times_array, arrival_dims_array, arrival_states_array
+
+    pass
 
 def sim_ExpSAHawkes_once(
     mu: np.ndarray,
@@ -1413,6 +1574,117 @@ class ExpSDHawkes(SDHawkes):
             self.dim, self.state_dim, self.state_matrix,
             self.background_intensity_func, self.background_intensity_max,
             self.alpha, self.beta, self.r, self.max_arrivals, self.use_disk)
+
+
+class MultiExpSDHawkes(SDHawkes):
+    """
+    dim: int,
+    state_dim: int,
+    third_dim: int,
+    state_matrix: np.ndarray,
+    background_intensity_func: Callable[[float, np.ndarray], np.ndarray],
+    background_intensity_max: float,
+    alpha: np.ndarray,
+    beta: np.ndarray,
+    r: Callable[[int, int, np.ndarray], float],
+    max_arrivals: int,
+    use_disk: bool,
+    T: float,
+    FLLN_scaling: float = 1,
+    output_dir: Optional[str] = None,
+    output_name: Optional[str] = None,
+    seed: Optional[Union[int, np.random.SeedSequence]] = None
+
+    """
+
+    def __init__(self, background_intensity_func, background_intensity_max, state_matrix, alpha, beta, r,
+                 max_arrivals: int = 500000, num_workers: int = 1, use_disk: bool = True):
+        """
+        Initialize the multi-exponential kernel Hawkes process simulator.
+        
+        Parameters:
+        -----------
+        background_intensity_func : Callable
+            See parent class SDHawkes for details
+        
+        background_intensity_max : float
+            See parent class SDHawkes for details
+        
+        state_matrix : np.ndarray
+            See parent class SDHawkes for details
+        
+        alpha : np.ndarray
+            Excitation parameter matrix, shape (dim, dim, third_dim).
+            alpha[i,j,k] represents the magnitude of excitation from dimension j to dimension i at sum index k. The parameter 'third_dim' is implicitly passed by the shape of alpha (and beta).
+            NOTE: alpha and beta must have the same shape. 
+        
+        beta : np.ndarray
+            Decay parameter matrix, shape (dim, dim, third_dim).
+            beta[i,j,k] is the exponential decay rate for excitation from j to i at sum index k.
+            NOTE: alpha and beta must have the same shape.
+        
+        r : Callable
+            State-dependent amplification function.
+            Signature: r(i, j, k, y) -> float
+            Arguments:
+                - i (int): Dimension index (from 0 to dim-1)
+                - j (int): Dimension index (from 0 to dim-1)
+                - k (int): Sum index (from 0 to third_dim-1), where third_dim = np.shape(alpha)[2] = np.shape(beta)[2]
+                - y (float or np.ndarray): Current state value
+            Returns:
+                - float: Amplification factor for excitation kernel element at (i,j,k) for given state y
+            Example: For state-dependent damping with scalar parameter delta and scalar-valued states:
+                def r(i, j, k, state):
+                    return (1+delta)**(-state)
+        
+        max_arrivals : int, optional
+            See parent class SDHawkes for details (default: 500000)
+        
+        num_workers : int, optional
+            See parent class SDHawkes for details (default: 1)
+        
+        use_disk : bool, optional
+            See parent class SDHawkes for details (default: True)
+        
+        """
+        super().__init__(background_intensity_func, None, background_intensity_max, state_matrix,
+                         max_arrivals, num_workers, use_disk)
+                
+        if np.shape(alpha) != np.shape(beta):
+            raise ValueError("alpha and beta must have the same shape for the MultiExponential Hawkes model. Note that you can always set some alphas to 0 and set some betas to 0 if the sum lengths are inhomogeneous.")
+        
+        self.third_dim = np.shape(alpha)[2]
+        
+        self.alpha = alpha
+        self.beta = beta
+        self.r = r
+        # TODO: build backup excitation kernel function for compatibility 
+        #self.excitation_kernel_func = self._build_exponential_excitation_kernel_func(alpha,beta,r,self.dim)
+
+
+    def _make_sim_partial(self):
+        """
+        Create a picklable partial of the exponential simulation function with all fixed (instance-level) parameters bound.
+        
+        The returned callable has signature:
+            sim_partial(T, FLLN_scaling, output_dir, output_name, seed) -> result
+        
+        Overrides SDHawkes._make_sim_partial to use sim_ExpSDHawkes_once with exponential-specific parameters (alpha, beta, r) instead of the general excitation_kernel_func.
+        
+        IMPORTANT: For this to be picklable by multiprocessing, all user-provided callables (background_intensity_func, r) must be defined at module level in the user's script (not lambdas or nested functions).
+        
+        Returns
+        -------
+        functools.partial
+            Partial of sim_MultiExpSDHawkes_once with fixed instance parameters bound.
+            Remaining free parameters: T (float), FLLN_scaling (float), output_dir (str or None), output_name (str or None), seed (SeedSequence or None)
+        """
+        return partial(sim_MultiExpSDHawkes_once,
+            self.dim, self.state_dim, self.state_matrix,
+            self.background_intensity_func, self.background_intensity_max,
+            self.alpha, self.beta, self.r, self.max_arrivals, self.use_disk)
+
+
 
 
 class ExpSAHawkes(SDHawkes):
