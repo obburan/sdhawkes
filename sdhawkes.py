@@ -767,7 +767,7 @@ def _process_single_sim(
     """
     sim_func, per_sim_data = func_and_params
     sim_index = per_sim_data[0]  # Extract index from per_sim_data
-    result = sim_func(per_sim_data)
+    result = sim_func(per_sim_data=per_sim_data)
     return (sim_index, result)
 
 def _sim_wrapper(
@@ -812,7 +812,7 @@ def _sim_wrapper(
     else:
         output_dir = None
         output_name = None
-    return sim_partial(T, FLLN_scaling, output_dir, output_name, seed)
+    return sim_partial(T=T, FLLN_scaling=FLLN_scaling, output_dir=output_dir, output_name=output_name, seed=seed)
 
 def _run_parallel_sims(
     data: List[Tuple[Optional[int], Optional[str], Optional[np.random.SeedSequence]]],
@@ -1070,9 +1070,9 @@ class SDHawkes:
             Remaining free parameters: T (float), FLLN_scaling (float), output_dir (str or None), output_name (str or None), seed (SeedSequence or None)
         """
         return partial(sim_SDHawkes_once_general,
-            self.dim, self.state_dim, self.state_matrix,
-            self.background_intensity_func, self.background_intensity_max,
-            self.excitation_kernel_func, self.max_arrivals, self.use_disk)
+            dim=self.dim, state_dim=self.state_dim, state_matrix=self.state_matrix,
+            background_intensity_func=self.background_intensity_func, background_intensity_max=self.background_intensity_max,
+            excitation_kernel_func=self.excitation_kernel_func, max_arrivals=self.max_arrivals, use_disk=self.use_disk)
 
 
     def sim(self, T:float, num_paths:int, FLLN_scaling:float=1, output_dir:str=None, external_info:dict=None, base_seed=None):
@@ -1135,7 +1135,7 @@ class SDHawkes:
         sim_partial = self._make_sim_partial()
         
         # Pass sim_partial into a partially evaluated _sim_wrapper along with other function-call-specific parameters.
-        sim_func = partial(_sim_wrapper, sim_partial, T, FLLN_scaling)
+        sim_func = partial(_sim_wrapper, sim_partial, T=T, FLLN_scaling=FLLN_scaling)
         
         # Spawn independent child seeds from SeedSequence for each simulation path
         ss = np.random.SeedSequence(base_seed)
@@ -1571,9 +1571,9 @@ class ExpSDHawkes(SDHawkes):
             Remaining free parameters: T (float), FLLN_scaling (float), output_dir (str or None), output_name (str or None), seed (SeedSequence or None)
         """
         return partial(sim_ExpSDHawkes_once,
-            self.dim, self.state_dim, self.state_matrix,
-            self.background_intensity_func, self.background_intensity_max,
-            self.alpha, self.beta, self.r, self.max_arrivals, self.use_disk)
+            dim=self.dim, state_dim=self.state_dim, state_matrix=self.state_matrix,
+            background_intensity_func=self.background_intensity_func, background_intensity_max=self.background_intensity_max,
+            alpha=self.alpha, beta=self.beta, r=self.r, max_arrivals=self.max_arrivals, use_disk=self.use_disk)
 
 
 class MultiExpSDHawkes(SDHawkes):
@@ -1760,10 +1760,9 @@ class MultiExpSDHawkes(SDHawkes):
             Remaining free parameters: T (float), FLLN_scaling (float), output_dir (str or None), output_name (str or None), seed (SeedSequence or None)
         """
         return partial(sim_MultiExpSDHawkes_once,
-            self.dim, self.state_dim, self.state_matrix,
-            self.background_intensity_func, self.background_intensity_max,
-            self.alpha, self.beta, self.r, self.max_arrivals, self.use_disk)
-
+            dim=self.dim, state_dim=self.state_dim, state_matrix=self.state_matrix,
+            background_intensity_func=self.background_intensity_func, background_intensity_max=self.background_intensity_max,
+            alpha=self.alpha, beta=self.beta, r=self.r, max_arrivals=self.max_arrivals, use_disk=self.use_disk)
 
 
 
@@ -1868,6 +1867,6 @@ class ExpSAHawkes(SDHawkes):
         """
         return partial(
             sim_ExpSAHawkes_once,
-            self.mu, self.alpha, self.beta,
-            self.dim, self.max_arrivals, self.use_disk)
+            mu=self.mu, alpha=self.alpha, beta=self.beta,
+            dim=self.dim, max_arrivals=self.max_arrivals, use_disk=self.use_disk)
     
